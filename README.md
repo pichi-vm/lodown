@@ -44,17 +44,20 @@ fn main() -> Result<(), lodown::Error> {
 - **`Control`** — the `/dev/loop-control` fd; a factory for devices:
   `open`, `add`, `remove`, `get_free`, and the `attach` convenience
   (`get_free` + `LOOP_CONFIGURE`). The device-producing constructors
-  (`add`, `get_free`, `attach`) return a `Removed` guard.
+  (`add`, `get_free`, `attach`) return a `Removed` guard; `by_number` opens
+  an *existing* `/dev/loopN` and returns a plain `LoopDevice` (no guard,
+  since it didn't create the device).
 - **`Removed`** — an auto-removing guard that `Deref`s to `LoopDevice`. On
   drop it detaches any backing file and removes the `/dev/loopN` node
   (best-effort); unwrap it with `LoopDevice::from(..)` to leak the device
   past the current scope, or call `LoopDevice::remove` for the same teardown
   with an observable error.
 - **`LoopDevice`** — the leaked form of a device: a handle to an opened
-  `/dev/loopN`, remembering its number. Everything else lives here:
-  `configure`, `detach`, `remove`, `status`, `set_capacity`,
-  `set_direct_io`, `set_block_size`, `change_fd`. `configure` and `change_fd`
-  accept any `AsFd` backing (a `File`, `&File`, or borrowed fd).
+  `/dev/loopN`, with `number`, `path`, `major`, and `minor` accessors.
+  Everything else lives here: `configure`, `detach`, `remove`, `status`,
+  `set_capacity`, `set_direct_io`, `set_block_size`, `change_fd`. `configure`
+  and `change_fd` accept any `AsFd` backing (a `File`, `&File`, or borrowed
+  fd).
 - **`Config`** — a fluent builder for the settable parameters (`offset`,
   `size_limit`, `read_only`, `autoclear`, `partscan`, `direct_io`,
   `block_size`) applied via `LOOP_CONFIGURE`.

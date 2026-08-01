@@ -62,6 +62,23 @@ impl Control {
         Ok(LoopDevice::new(number, file, Arc::clone(&self.0)))
     }
 
+    /// Open an existing `/dev/loop{number}` and return a plain
+    /// [`LoopDevice`] handle — no `LOOP_CTL_ADD`, and (unlike
+    /// [`add`](Self::add) / [`get_free`](Self::get_free) /
+    /// [`attach`](Self::attach)) no auto-removing [`Removed`] guard, since
+    /// this handle did not create the device and so must not tear it down.
+    ///
+    /// This does not check whether the device is bound; a later operation
+    /// surfaces the kernel's error (e.g. `ENXIO`) if it isn't.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] if `/dev/loop{number}` can't be opened (e.g. it does
+    /// not exist).
+    pub fn by_number(&self, number: u32) -> Result<LoopDevice, Error> {
+        self.open_device(number)
+    }
+
     /// `LOOP_CTL_ADD` — create `/dev/loop{number}` and return an
     /// auto-removing [`Removed`] handle to it.
     ///

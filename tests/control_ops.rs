@@ -61,6 +61,35 @@ fn dropping_guard_removes_the_node() {
 }
 
 #[test]
+fn by_number_opens_existing_without_owning_it() {
+    let Some(control) = common::open_control() else {
+        return;
+    };
+    let n = spare_number() + 3;
+
+    // The guard owns removal; keep it bound for the whole test.
+    let owner = control.add(n).expect("add loop device");
+
+    // A second, plain handle to the same node.
+    let view = control.by_number(n).expect("open existing loop device");
+    assert_eq!(view.number(), n);
+    assert_eq!(view.major(), 7);
+    assert_eq!(view.minor(), n);
+    assert_eq!(view.path().to_str().unwrap(), format!("/dev/loop{n}"));
+
+    // Dropping the plain handle must NOT remove the node — it didn't create
+    // it. The node still exists, so another open succeeds.
+    drop(view);
+    control
+        .by_number(n)
+        .expect("node should still exist after plain handle drops");
+
+    // The owning guard still tears the node down on drop.
+    drop(owner);
+    assert!(matches!(control.remove(n), Err(Error::LoopIoctl { .. })));
+}
+
+#[test]
 fn change_fd_swaps_backing_file() {
     let Some(control) = common::open_control() else {
         return;

@@ -8,6 +8,7 @@
 use std::fmt;
 use std::fs::File;
 use std::os::fd::{AsFd, AsRawFd};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
@@ -19,7 +20,7 @@ use std::os::raw::c_int;
 use crate::uapi::{
     LO_FLAGS_AUTOCLEAR, LO_FLAGS_DIRECT_IO, LO_FLAGS_PARTSCAN, LO_FLAGS_READ_ONLY, LO_KEY_SIZE,
     LO_NAME_SIZE, LOOP_CHANGE_FD, LOOP_CLR_FD, LOOP_CONFIGURE, LOOP_CTL_REMOVE, LOOP_GET_STATUS64,
-    LOOP_SET_BLOCK_SIZE, LOOP_SET_CAPACITY, LOOP_SET_DIRECT_IO,
+    LOOP_MAJOR, LOOP_SET_BLOCK_SIZE, LOOP_SET_CAPACITY, LOOP_SET_DIRECT_IO,
 };
 
 /// A handle to an opened loop device (`/dev/loopN`). Owns the device node's
@@ -62,6 +63,23 @@ impl LoopDevice {
 
     /// This device's loop number `N` (as in `/dev/loopN`).
     pub fn number(&self) -> u32 {
+        self.number
+    }
+
+    /// This device's node path, `/dev/loop{number}`.
+    pub fn path(&self) -> PathBuf {
+        PathBuf::from(format!("/dev/loop{}", self.number))
+    }
+
+    /// This device's block-device major number. Loop devices always use the
+    /// loop driver's major, `7`.
+    pub fn major(&self) -> u32 {
+        LOOP_MAJOR
+    }
+
+    /// This device's block-device minor number, which for a loop device is
+    /// its loop [`number`](Self::number).
+    pub fn minor(&self) -> u32 {
         self.number
     }
 
@@ -460,6 +478,18 @@ mod tests {
             lo_file_name,
             ..LoopInfo::new_zeroed()
         }
+    }
+
+    #[test]
+    fn device_path_major_minor_derive_from_number() {
+        // `/dev/null` is a stand-in fd; the accessors depend only on the
+        // recorded loop number, so no real loop device is needed.
+        let dummy = || File::open("/dev/null").expect("/dev/null always exists");
+        let dev = LoopDevice::new(7, dummy(), Arc::new(dummy()));
+        assert_eq!(dev.number(), 7);
+        assert_eq!(dev.path().to_str().unwrap(), "/dev/loop7");
+        assert_eq!(dev.major(), 7);
+        assert_eq!(dev.minor(), 7);
     }
 
     #[test]

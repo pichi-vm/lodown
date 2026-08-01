@@ -29,6 +29,10 @@ use iocuddle::{Ioctl, Write, WriteRead};
 pub(crate) const LO_NAME_SIZE: usize = 64;
 pub(crate) const LO_KEY_SIZE: usize = 32;
 
+/// `LOOP_MAJOR` — the block-device major number the loop driver owns. Fixed
+/// at 7 in Linux; a `/dev/loopN` node is `(7, N)`.
+pub(crate) const LOOP_MAJOR: u32 = 7;
+
 /// `LO_FLAGS_READ_ONLY` — the loop device is read-only.
 pub(crate) const LO_FLAGS_READ_ONLY: u32 = 1;
 
