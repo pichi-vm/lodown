@@ -4,7 +4,6 @@
 //! [`LoopDevice`]s.
 
 use std::fs::{File, OpenOptions};
-use std::io;
 use std::os::fd::AsFd;
 use std::sync::Arc;
 
@@ -34,17 +33,12 @@ impl Control {
     /// the process lacks `CAP_SYS_ADMIN`, or the `loop` module isn't
     /// loaded).
     pub fn open() -> Result<Self, Error> {
-        let file =
-            OpenOptions::new().read(true).write(true).open("/dev/loop-control").map_err(
-                |source| {
-                    Error::Io(io::Error::new(
-                        source.kind(),
-                        format!(
-                            "cannot open /dev/loop-control (need CAP_SYS_ADMIN and the loop module loaded): {source}"
-                        ),
-                    ))
-                },
-            )?;
+        // Propagate the raw io::Error so its errno (and kind) survive; the
+        // likely-cause hint lives in the `# Errors` docs, not the message.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/loop-control")?;
         Ok(Self(Arc::new(file)))
     }
 
@@ -52,16 +46,7 @@ impl Control {
     /// control's `/dev/loop-control` handle so the device can remove itself.
     fn open_device(&self, number: u32) -> Result<LoopDevice, Error> {
         let path = format!("/dev/loop{number}");
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|source| {
-                Error::Io(io::Error::new(
-                    source.kind(),
-                    format!("cannot open {path}: {source}"),
-                ))
-            })?;
+        let file = OpenOptions::new().read(true).write(true).open(&path)?;
         Ok(LoopDevice::new(number, file, Arc::clone(&self.0)))
     }
 
