@@ -1,17 +1,14 @@
 [package]
-name = "loopdev"
+name = "lodown"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-level, iocuddle-based Linux loop-device ioctl layer."
-repository = "https://github.com/pichi-vm/loopdev"
-homepage = "https://github.com/pichi-vm/loopdev"
+repository = "https://github.com/pichi-vm/lodown"
+homepage = "https://github.com/pichi-vm/lodown"
 readme = "README.md"
 keywords = ["linux", "loop", "loopback", "ioctl", "block-device"]
 categories = ["os::unix-apis", "api-bindings"]
-# The crate name `loopdev` is already taken on crates.io; keep this
-# unpublished until the package is renamed to a free name.
-publish = false
 
 [dependencies]
 iocuddle = "0.3"

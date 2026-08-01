@@ -9,9 +9,9 @@
 //!
 //! ```no_run
 //! use std::fs::File;
-//! use loopdev::{Config, Control};
+//! use lodown::{Config, Control};
 //!
-//! # fn main() -> Result<(), loopdev::Error> {
+//! # fn main() -> Result<(), lodown::Error> {
 //! let control = Control::open()?;               // needs CAP_SYS_ADMIN
 //! let backing = File::open("/path/to/backing.img")?;
 //!

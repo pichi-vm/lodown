@@ -13,7 +13,7 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use loopdev::{Config, Control, Error, LoopDevice};
+use lodown::{Config, Control, Error, LoopDevice};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -55,7 +55,7 @@ impl BackingFile {
     pub(crate) fn create(name: &str, size_bytes: u64) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let path =
-            std::env::temp_dir().join(format!("loopdev-test-{name}-{}-{id}", std::process::id()));
+            std::env::temp_dir().join(format!("lodown-test-{name}-{}-{id}", std::process::id()));
         let file = File::options()
             .read(true)
             .write(true)

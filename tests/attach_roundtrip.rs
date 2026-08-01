@@ -5,7 +5,7 @@
 
 mod common;
 
-use loopdev::Config;
+use lodown::Config;
 
 const BACKING_SIZE: u64 = 4 * 1024 * 1024; // 4 MiB
 const OFFSET: u64 = 64 * 1024; // 64 KiB

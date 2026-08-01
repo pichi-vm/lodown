@@ -7,7 +7,7 @@
 
 mod common;
 
-use loopdev::{Config, Error};
+use lodown::{Config, Error};
 
 const BACKING_SIZE: u64 = 4 * 1024 * 1024; // 4 MiB
 

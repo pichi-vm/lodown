@@ -114,7 +114,7 @@ impl Control {
     /// ```no_run
     /// use std::fs::File;
     /// use std::io::ErrorKind;
-    /// use loopdev::{Config, Control, Error};
+    /// use lodown::{Config, Control, Error};
     ///
     /// # fn main() -> Result<(), Error> {
     /// let control = Control::open()?;

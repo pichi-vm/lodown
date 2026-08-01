@@ -21,7 +21,7 @@ use crate::uapi::{
 /// [`crate::LoopDevice::configure`]:
 ///
 /// ```
-/// use loopdev::Config;
+/// use lodown::Config;
 ///
 /// let config = Config::new()
 ///     .offset(4096)

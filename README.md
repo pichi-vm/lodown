@@ -1,4 +1,4 @@
-# loopdev
+# lodown
 
 A high-level, safe Rust interface to the Linux **loop device** control
 ioctls. Create and remove loop devices, attach and detach backing files,
@@ -19,9 +19,9 @@ single raw helper for the loop ioctls that take a scalar argument by value).
 
 ```no_run
 use std::fs::File;
-use loopdev::{Config, Control};
+use lodown::{Config, Control};
 
-fn main() -> Result<(), loopdev::Error> {
+fn main() -> Result<(), lodown::Error> {
     let control = Control::open()?;              // /dev/loop-control
     let backing = File::open("disk.img")?;
 
