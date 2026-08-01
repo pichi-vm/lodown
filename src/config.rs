@@ -4,7 +4,7 @@
 //! [`LoopConfig`]: the `#[repr(C)]` mirror of `struct loop_config` that
 //! iocuddle's `LOOP_CONFIGURE` declaration references.
 
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsFd, AsRawFd};
 
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
@@ -171,11 +171,11 @@ impl Config {
 
     /// Render this config plus a backing-file descriptor into a
     /// `LOOP_CONFIGURE` argument.
-    pub(crate) fn to_loop_config(self, backing: &impl AsRawFd) -> LoopConfig {
+    pub(crate) fn to_loop_config(self, backing: impl AsFd) -> LoopConfig {
         // A loop device's backing fd is always a real, non-negative kernel
         // descriptor; the kernel's `loop_config.fd` field is itself a u32.
         #[allow(clippy::cast_sign_loss)]
-        let fd = backing.as_raw_fd() as u32;
+        let fd = backing.as_fd().as_raw_fd() as u32;
         LoopConfig {
             fd,
             block_size: self.block_size,

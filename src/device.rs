@@ -8,6 +8,7 @@
 use std::fmt;
 use std::fs::File;
 use std::os::fd::{AsFd, AsRawFd};
+use std::sync::Arc;
 
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
@@ -17,23 +18,29 @@ use std::os::raw::c_int;
 
 use crate::uapi::{
     LO_FLAGS_AUTOCLEAR, LO_FLAGS_DIRECT_IO, LO_FLAGS_PARTSCAN, LO_FLAGS_READ_ONLY, LO_KEY_SIZE,
-    LO_NAME_SIZE, LOOP_CHANGE_FD, LOOP_CLR_FD, LOOP_CONFIGURE, LOOP_GET_STATUS64,
+    LO_NAME_SIZE, LOOP_CHANGE_FD, LOOP_CLR_FD, LOOP_CONFIGURE, LOOP_CTL_REMOVE, LOOP_GET_STATUS64,
     LOOP_SET_BLOCK_SIZE, LOOP_SET_CAPACITY, LOOP_SET_DIRECT_IO,
 };
 
 /// A handle to an opened loop device (`/dev/loopN`). Owns the device node's
-/// `File` and remembers its number.
+/// `File`, remembers its number, and holds a shared handle to
+/// `/dev/loop-control` so it can remove the node.
 ///
-/// Dropping a `LoopDevice` closes the node but does *not* detach the backing
-/// file — call [`LoopDevice::detach`] for that (or configure the device with
-/// [`Config::autoclear`] so the kernel detaches it when the last user
-/// closes it).
+/// A `LoopDevice` is the *leaked* form of a device: dropping it closes the
+/// node but does *not* detach the backing file or remove the node. The
+/// [`Control`](crate::Control) constructors instead hand back a [`Removed`]
+/// guard that tears the device down on drop; a `LoopDevice` is what you get
+/// by unwrapping that guard (`LoopDevice::from(removed)`) to opt out of
+/// automatic teardown. Call [`LoopDevice::detach`] / [`LoopDevice::remove`]
+/// for manual teardown (or configure with [`Config::autoclear`] so the kernel
+/// detaches when the last user closes the node).
 ///
 /// A `LoopDevice` exclusively owns its `/dev/loopN` file descriptor and is
 /// intentionally not `Clone`.
 pub struct LoopDevice {
     number: u32,
     file: File,
+    control: Arc<File>,
 }
 
 impl fmt::Debug for LoopDevice {
@@ -45,8 +52,12 @@ impl fmt::Debug for LoopDevice {
 }
 
 impl LoopDevice {
-    pub(crate) fn new(number: u32, file: File) -> Self {
-        Self { number, file }
+    pub(crate) fn new(number: u32, file: File, control: Arc<File>) -> Self {
+        Self {
+            number,
+            file,
+            control,
+        }
     }
 
     /// This device's loop number `N` (as in `/dev/loopN`).
@@ -70,7 +81,7 @@ impl LoopDevice {
     /// limit isn't aligned to the block size). [`Error::LoopIoctl`] if the
     /// kernel rejects the configuration (e.g. the device is already bound, or
     /// `EBUSY`).
-    pub fn configure(&self, backing: &File, config: &Config) -> Result<(), Error> {
+    pub fn configure(&self, backing: impl AsFd, config: &Config) -> Result<(), Error> {
         config.validate()?;
         let raw = config.to_loop_config(backing);
         LOOP_CONFIGURE
@@ -190,14 +201,99 @@ impl LoopDevice {
     /// # Errors
     ///
     /// [`Error::LoopIoctl`] if the kernel rejects the swap.
-    pub fn change_fd(&self, backing: &File) -> Result<(), Error> {
+    pub fn change_fd(&self, backing: impl AsFd) -> Result<(), Error> {
         LOOP_CHANGE_FD
-            .ioctl(self.file.as_fd(), backing.as_raw_fd())
+            .ioctl(self.file.as_fd(), backing.as_fd().as_raw_fd())
             .map_err(|source| Error::LoopIoctl {
                 op: "LOOP_CHANGE_FD",
                 source,
             })?;
         Ok(())
+    }
+
+    /// Detach any backing file and remove this device's `/dev/loopN` node,
+    /// surfacing the removal error.
+    ///
+    /// This is the observable-error form of what the [`Removed`] guard does
+    /// on drop: it best-effort detaches (so the removal won't fail `EBUSY`),
+    /// closes this handle's node fd, then issues `LOOP_CTL_REMOVE` via the
+    /// control fd and returns any error.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::LoopIoctl`] if the kernel rejects the removal (e.g. the node
+    /// is still open elsewhere — `EBUSY`).
+    pub fn remove(self) -> Result<(), Error> {
+        // Best-effort unbind so the node isn't busy on account of a binding.
+        let _ = self.detach();
+        let Self {
+            number,
+            file,
+            control,
+        } = self;
+        // The kernel refuses `LOOP_CTL_REMOVE` while any fd to the node is
+        // open, so close ours before asking the control node to remove it.
+        drop(file);
+        // Loop numbers are small and always fit in a positive c_int.
+        #[allow(clippy::cast_possible_wrap)]
+        LOOP_CTL_REMOVE
+            .ioctl(control.as_fd(), number as c_int)
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_CTL_REMOVE",
+                source,
+            })?;
+        Ok(())
+    }
+}
+
+/// The auto-removing wrapper the [`Control`](crate::Control) constructors
+/// (`add`, `get_free`, `attach`) return. `Drop` tears the device down —
+/// detaching any backing file, then removing the `/dev/loopN` node — and
+/// discards errors. Use `LoopDevice::from(removed).remove()` for
+/// observable-error teardown, or `LoopDevice::from(removed)` (`.into()`)
+/// alone to opt out of teardown and keep the device past this scope.
+///
+/// `#[must_use]`: dropping a `Removed` immediately tears the device down, so
+/// a discarded value (`let _ = control.attach(..)?;`) would silently detach
+/// and remove the device it just set up. Bind it to a name to keep the
+/// device alive for the binding's scope.
+#[must_use = "dropping a `Removed` tears the device down; bind it to keep the device alive"]
+pub struct Removed(Option<LoopDevice>);
+
+impl fmt::Debug for Removed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Removed").field(&self.0).finish()
+    }
+}
+
+impl From<LoopDevice> for Removed {
+    fn from(device: LoopDevice) -> Self {
+        Removed(Some(device))
+    }
+}
+
+impl From<Removed> for LoopDevice {
+    fn from(mut removed: Removed) -> Self {
+        removed.0.take().unwrap()
+    }
+}
+
+impl std::ops::Deref for Removed {
+    type Target = LoopDevice;
+    fn deref(&self) -> &LoopDevice {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl Drop for Removed {
+    fn drop(&mut self) {
+        if let Some(device) = self.0.take() {
+            // `remove` detaches, closes the node fd, then removes it. It is
+            // best-effort here: if the kernel still refuses removal (a
+            // preallocated `loop0-7`, or a node held open elsewhere), the
+            // detach already ran, degrading cleanly to detach-only.
+            let _ = device.remove();
+        }
     }
 }
 

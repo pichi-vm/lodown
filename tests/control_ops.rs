@@ -7,7 +7,7 @@
 
 mod common;
 
-use lodown::{Config, Error};
+use lodown::{Config, Error, LoopDevice};
 
 const BACKING_SIZE: u64 = 4 * 1024 * 1024; // 4 MiB
 
@@ -27,7 +27,9 @@ fn add_remove_round_trip() {
     };
     let n = spare_number();
 
-    let dev = control.add(n).expect("add loop device");
+    // Opt out of the auto-removing guard so this test drives `remove`
+    // explicitly (and exercises the `Removed` -> `LoopDevice` unwrap).
+    let dev: LoopDevice = control.add(n).expect("add loop device").into();
     assert_eq!(dev.number(), n);
 
     // Adding the same number again must fail (EEXIST).
@@ -38,6 +40,23 @@ fn add_remove_round_trip() {
     control.remove(n).expect("remove loop device");
 
     // Removing a now-nonexistent number must fail.
+    assert!(matches!(control.remove(n), Err(Error::LoopIoctl { .. })));
+}
+
+#[test]
+fn dropping_guard_removes_the_node() {
+    let Some(control) = common::open_control() else {
+        return;
+    };
+    let n = spare_number() + 2;
+
+    let dev = control.add(n).expect("add loop device");
+    assert_eq!(dev.number(), n);
+
+    // Dropping the guard detaches (a no-op here) and removes the node.
+    drop(dev);
+
+    // The node is gone, so an explicit remove of the same number now fails.
     assert!(matches!(control.remove(n), Err(Error::LoopIoctl { .. })));
 }
 
@@ -107,7 +126,7 @@ fn status_on_unbound_device_reports_op() {
     };
     let n = spare_number() + 1;
 
-    let dev = control.add(n).expect("add loop device");
+    let dev: LoopDevice = control.add(n).expect("add loop device").into();
 
     // No backing file bound yet, so LOOP_GET_STATUS64 fails with ENXIO (6).
     match dev.status() {

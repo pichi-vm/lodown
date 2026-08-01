@@ -5,9 +5,9 @@ ioctls. Create and remove loop devices, attach and detach backing files,
 read back their status, and adjust capacity, block size, and direct I/O —
 all through typed Rust rather than hand-packed `struct loop_config` buffers.
 
-Built on [`iocuddle`](https://crates.io/crates/iocuddle); the only `unsafe`
-in the crate is confined to one module (the ioctl-number declarations plus a
-single raw helper for the loop ioctls that take a scalar argument by value).
+Built on [`iocuddle`](https://crates.io/crates/iocuddle); every ioctl goes
+through iocuddle, so the only `unsafe` in the crate is confined to one module
+— the ioctl-number declarations (iocuddle's `const` constructors).
 
 ## Requirements
 
@@ -25,15 +25,17 @@ fn main() -> Result<(), lodown::Error> {
     let control = Control::open()?;              // /dev/loop-control
     let backing = File::open("disk.img")?;
 
-    // Allocate a free device and configure it in one step.
+    // Allocate a free device and configure it in one step. The returned
+    // `Removed` guard detaches the backing file and removes the node when
+    // dropped; call `LoopDevice::from(dev)` to keep the device past this
+    // scope.
     let dev = control.attach(&backing, &Config::new().offset(0).read_only(true))?;
 
     let status = dev.status()?;
     println!("/dev/loop{} — offset {}, read_only {}",
              dev.number(), status.offset(), status.is_read_only());
 
-    dev.detach()?;                               // LOOP_CLR_FD
-    Ok(())
+    Ok(())                                        // `dev` drops -> detach + remove
 }
 ```
 
@@ -41,10 +43,18 @@ fn main() -> Result<(), lodown::Error> {
 
 - **`Control`** — the `/dev/loop-control` fd; a factory for devices:
   `open`, `add`, `remove`, `get_free`, and the `attach` convenience
-  (`get_free` + `LOOP_CONFIGURE`).
-- **`LoopDevice`** — a handle to an opened `/dev/loopN`, remembering its
-  number. Everything else lives here: `configure`, `detach`, `status`,
-  `set_capacity`, `set_direct_io`, `set_block_size`, `change_fd`.
+  (`get_free` + `LOOP_CONFIGURE`). The device-producing constructors
+  (`add`, `get_free`, `attach`) return a `Removed` guard.
+- **`Removed`** — an auto-removing guard that `Deref`s to `LoopDevice`. On
+  drop it detaches any backing file and removes the `/dev/loopN` node
+  (best-effort); unwrap it with `LoopDevice::from(..)` to leak the device
+  past the current scope, or call `LoopDevice::remove` for the same teardown
+  with an observable error.
+- **`LoopDevice`** — the leaked form of a device: a handle to an opened
+  `/dev/loopN`, remembering its number. Everything else lives here:
+  `configure`, `detach`, `remove`, `status`, `set_capacity`,
+  `set_direct_io`, `set_block_size`, `change_fd`. `configure` and `change_fd`
+  accept any `AsFd` backing (a `File`, `&File`, or borrowed fd).
 - **`Config`** — a fluent builder for the settable parameters (`offset`,
   `size_limit`, `read_only`, `autoclear`, `partscan`, `direct_io`,
   `block_size`) applied via `LOOP_CONFIGURE`.

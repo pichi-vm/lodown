@@ -34,7 +34,7 @@ mod uapi;
 
 pub use config::Config;
 pub use control::Control;
-pub use device::{LoopDevice, Status};
+pub use device::{LoopDevice, Removed, Status};
 pub use error::Error;
 
 /// The handles are safe to share across threads; assert it at compile time
