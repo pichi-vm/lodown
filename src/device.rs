@@ -5,11 +5,13 @@
 //! iocuddle's `LOOP_GET_STATUS64`/`LOOP_SET_STATUS64` declarations reference.
 //! [`Status`]: a read-only view over `LOOP_GET_STATUS64`.
 
+use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
 use std::marker::PhantomData;
 use std::os::fd::{AsFd, AsRawFd};
-use std::path::PathBuf;
+use std::os::unix::ffi::OsStringExt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
@@ -82,8 +84,12 @@ impl LoopDevice {
         LOOP_MAJOR
     }
 
-    /// This device's block-device minor number, which for a loop device is
-    /// its loop [`number`](Self::number).
+    /// This device's block-device minor number.
+    ///
+    /// This assumes the loop driver's default `max_part = 0`, where the minor
+    /// equals the loop [`number`](Self::number). If the `loop` module was
+    /// loaded with `max_part > 0` (partition scanning), the real minor is
+    /// `number << part_shift`; this accessor does not account for that.
     pub fn minor(&self) -> u32 {
         self.number
     }
@@ -418,7 +424,9 @@ pub struct Status {
     size_limit: u64,
     number: u32,
     flags: u32,
-    file_name: String,
+    // The NUL-trimmed backing-file path exactly as the kernel recorded it,
+    // built losslessly from the raw bytes (a Linux path is a byte string).
+    file_name: PathBuf,
 }
 
 impl Status {
@@ -428,13 +436,12 @@ impl Status {
             .iter()
             .position(|&b| b == 0)
             .unwrap_or(info.lo_file_name.len());
-        let file_name = String::from_utf8_lossy(&info.lo_file_name[..nul]).into_owned();
         Self {
             offset: info.lo_offset,
             size_limit: info.lo_sizelimit,
             number: info.lo_number,
             flags: info.lo_flags,
-            file_name,
+            file_name: PathBuf::from(OsString::from_vec(info.lo_file_name[..nul].to_vec())),
         }
     }
 
@@ -481,9 +488,12 @@ impl Status {
         self.flags
     }
 
-    /// The backing file's name as recorded by the kernel (NUL-trimmed,
-    /// lossily decoded as UTF-8).
-    pub fn file_name(&self) -> &str {
+    /// The backing file's path as recorded by the kernel (NUL-trimmed).
+    ///
+    /// Returned as a `&Path` so a non-UTF-8 name is preserved exactly rather
+    /// than lossily decoded; use [`Path::display`] or [`Path::to_str`] for a
+    /// textual form.
+    pub fn file_name(&self) -> &Path {
         &self.file_name
     }
 }
@@ -491,6 +501,7 @@ impl Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::ffi::OsStrExt;
 
     fn synthetic_info(
         offset: u64,
@@ -530,7 +541,7 @@ mod tests {
         assert_eq!(status.offset(), 0x1000);
         assert_eq!(status.size_limit(), 0x2000);
         assert_eq!(status.number(), 3);
-        assert_eq!(status.file_name(), "/tmp/backing.img");
+        assert_eq!(status.file_name(), Path::new("/tmp/backing.img"));
     }
 
     #[test]
@@ -563,35 +574,41 @@ mod tests {
     fn status_trims_at_first_nul() {
         // Bytes past the NUL are ignored, not folded into the name.
         let info = synthetic_info(0, 0, 0, 0, b"name\0garbage");
-        assert_eq!(Status::from_info(&info).file_name(), "name");
+        assert_eq!(Status::from_info(&info).file_name(), Path::new("name"));
     }
 
     #[test]
     fn status_handles_a_name_filling_the_whole_field() {
         let name = [b'x'; LO_NAME_SIZE];
         let info = synthetic_info(0, 0, 0, 0, &name);
-        assert_eq!(Status::from_info(&info).file_name().len(), LO_NAME_SIZE);
+        assert_eq!(
+            Status::from_info(&info).file_name().as_os_str().len(),
+            LO_NAME_SIZE
+        );
     }
 
     #[test]
-    fn status_empty_name_decodes_to_empty_string() {
+    fn status_empty_name_is_empty() {
         let info = synthetic_info(0, 0, 0, 0, b"");
-        assert_eq!(Status::from_info(&info).file_name(), "");
+        assert_eq!(Status::from_info(&info).file_name(), Path::new(""));
     }
 
     #[test]
-    fn status_non_utf8_name_uses_replacement_char() {
-        // An invalid UTF-8 byte is decoded lossily to U+FFFD.
+    fn status_non_utf8_name_is_preserved_losslessly() {
+        // A non-UTF-8 byte survives verbatim in the returned path.
         let info = synthetic_info(0, 0, 0, 0, b"na\xffme");
-        assert!(Status::from_info(&info).file_name().contains('\u{fffd}'));
+        assert_eq!(
+            Status::from_info(&info).file_name().as_os_str().as_bytes(),
+            b"na\xffme"
+        );
     }
 
     #[test]
-    fn status_trims_nul_before_lossy_decode() {
+    fn status_trims_nul_before_the_name() {
         // NUL-trim happens first, so the trailing 0xff (past the NUL) never
-        // reaches the lossy decode: `b"ok\0\xff"` -> `"ok"`.
+        // reaches the name: `b"ok\0\xff"` -> `"ok"`.
         let info = synthetic_info(0, 0, 0, 0, b"ok\0\xff");
-        assert_eq!(Status::from_info(&info).file_name(), "ok");
+        assert_eq!(Status::from_info(&info).file_name(), Path::new("ok"));
     }
 
     #[test]
