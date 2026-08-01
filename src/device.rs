@@ -380,6 +380,18 @@ pub(crate) struct LoopInfo {
 }
 
 const _: () = assert!(core::mem::size_of::<LoopInfo>() == 232);
+// Field offsets are load-bearing for the `struct loop_info64` ABI; a
+// size-preserving reorder would break it while passing the size assert.
+const _: () = {
+    use core::mem::offset_of;
+    assert!(offset_of!(LoopInfo, lo_device) == 0);
+    assert!(offset_of!(LoopInfo, lo_offset) == 24);
+    assert!(offset_of!(LoopInfo, lo_sizelimit) == 32);
+    assert!(offset_of!(LoopInfo, lo_number) == 40);
+    assert!(offset_of!(LoopInfo, lo_flags) == 52);
+    assert!(offset_of!(LoopInfo, lo_file_name) == 56);
+    assert!(offset_of!(LoopInfo, lo_init) == 216);
+};
 
 impl LoopInfo {
     /// Build the `loop_info64` a `LOOP_CONFIGURE` carries: only `lo_offset`,

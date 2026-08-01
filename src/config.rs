@@ -168,6 +168,14 @@ pub(crate) struct LoopConfig {
 }
 
 const _: () = assert!(core::mem::size_of::<LoopConfig>() == 304);
+// Field offsets are load-bearing for the `struct loop_config` ABI.
+const _: () = {
+    use core::mem::offset_of;
+    assert!(offset_of!(LoopConfig, fd) == 0);
+    assert!(offset_of!(LoopConfig, block_size) == 4);
+    assert!(offset_of!(LoopConfig, info) == 8);
+    assert!(offset_of!(LoopConfig, __reserved) == 240);
+};
 
 #[cfg(test)]
 mod tests {
