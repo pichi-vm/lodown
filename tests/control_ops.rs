@@ -140,14 +140,19 @@ fn set_direct_io_toggles() {
     let backing = common::BackingFile::create("directio", BACKING_SIZE);
     let dev = common::attach_retrying(&control, &backing.file, &Config::new());
 
-    // Direct I/O may be unsupported on the backing filesystem (e.g. tmpfs);
-    // only assert the observable state when enabling actually succeeds.
-    if dev.set_direct_io(true).is_ok() {
-        assert!(dev.status().expect("status").is_direct_io());
-        dev.set_direct_io(false).expect("disable direct io");
-        assert!(!dev.status().expect("status").is_direct_io());
-    } else {
-        eprintln!("skip: backing filesystem does not support direct I/O");
+    // Direct I/O may be unsupported on the backing filesystem (e.g. tmpfs),
+    // which the kernel reports as EINVAL/EOPNOTSUPP; skip only on those. Any
+    // other error is a real failure, not an unsupported-filesystem skip.
+    match dev.set_direct_io(true) {
+        Ok(()) => {
+            assert!(dev.status().expect("status").is_direct_io());
+            dev.set_direct_io(false).expect("disable direct io");
+            assert!(!dev.status().expect("status").is_direct_io());
+        }
+        Err(Error::LoopIoctl { source, .. }) if matches!(source.raw_os_error(), Some(22 | 95)) => {
+            eprintln!("skip: backing filesystem does not support direct I/O");
+        }
+        Err(other) => panic!("set_direct_io failed unexpectedly: {other}"),
     }
 
     dev.detach().expect("detach");
