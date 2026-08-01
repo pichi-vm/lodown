@@ -10,9 +10,7 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 use crate::Error;
 use crate::device::LoopInfo;
-use crate::uapi::{
-    LO_FLAGS_AUTOCLEAR, LO_FLAGS_DIRECT_IO, LO_FLAGS_PARTSCAN, LO_FLAGS_READ_ONLY,
-};
+use crate::uapi::{LO_FLAGS_AUTOCLEAR, LO_FLAGS_DIRECT_IO, LO_FLAGS_PARTSCAN, LO_FLAGS_READ_ONLY};
 
 /// The settable loop-device parameters, applied via `LOOP_CONFIGURE` when a
 /// backing file is attached.
@@ -255,19 +253,35 @@ mod tests {
         let file = backing();
 
         assert_eq!(
-            Config::new().read_only(true).to_loop_config(&file).info.flags(),
+            Config::new()
+                .read_only(true)
+                .to_loop_config(&file)
+                .info
+                .flags(),
             LO_FLAGS_READ_ONLY
         );
         assert_eq!(
-            Config::new().autoclear(true).to_loop_config(&file).info.flags(),
+            Config::new()
+                .autoclear(true)
+                .to_loop_config(&file)
+                .info
+                .flags(),
             LO_FLAGS_AUTOCLEAR
         );
         assert_eq!(
-            Config::new().partscan(true).to_loop_config(&file).info.flags(),
+            Config::new()
+                .partscan(true)
+                .to_loop_config(&file)
+                .info
+                .flags(),
             LO_FLAGS_PARTSCAN
         );
         assert_eq!(
-            Config::new().direct_io(true).to_loop_config(&file).info.flags(),
+            Config::new()
+                .direct_io(true)
+                .to_loop_config(&file)
+                .info
+                .flags(),
             LO_FLAGS_DIRECT_IO
         );
     }
@@ -326,7 +340,10 @@ mod tests {
     #[test]
     fn block_size_validation_accepts_good_values() {
         for ok in [0, 512, 1024, 2048, 4096] {
-            assert!(validate_block_size(ok).is_ok(), "block_size {ok} should be accepted");
+            assert!(
+                validate_block_size(ok).is_ok(),
+                "block_size {ok} should be accepted"
+            );
         }
     }
 
@@ -338,13 +355,20 @@ mod tests {
 
     #[test]
     fn direct_io_rejects_unaligned_size_limit() {
-        let cfg = Config::new().direct_io(true).block_size(512).size_limit(1000);
+        let cfg = Config::new()
+            .direct_io(true)
+            .block_size(512)
+            .size_limit(1000);
         assert!(matches!(cfg.validate(), Err(Error::Usage(_))));
     }
 
     #[test]
     fn direct_io_accepts_aligned() {
-        let cfg = Config::new().direct_io(true).block_size(512).offset(1024).size_limit(2048);
+        let cfg = Config::new()
+            .direct_io(true)
+            .block_size(512)
+            .offset(1024)
+            .size_limit(2048);
         assert!(cfg.validate().is_ok());
     }
 

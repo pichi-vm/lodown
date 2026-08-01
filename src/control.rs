@@ -46,9 +46,16 @@ impl Control {
     /// Open `/dev/loop{number}` and wrap it in a [`LoopDevice`].
     fn open_device(number: u32) -> Result<LoopDevice, Error> {
         let path = format!("/dev/loop{number}");
-        let file = OpenOptions::new().read(true).write(true).open(&path).map_err(|source| {
-            Error::Io(io::Error::new(source.kind(), format!("cannot open {path}: {source}")))
-        })?;
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|source| {
+                Error::Io(io::Error::new(
+                    source.kind(),
+                    format!("cannot open {path}: {source}"),
+                ))
+            })?;
         Ok(LoopDevice::new(number, file))
     }
 
@@ -64,7 +71,10 @@ impl Control {
         #[allow(clippy::cast_possible_wrap)]
         LOOP_CTL_ADD
             .ioctl(self.0.as_fd(), number as c_int)
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_CTL_ADD", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_CTL_ADD",
+                source,
+            })?;
         Self::open_device(number)
     }
 
@@ -79,7 +89,10 @@ impl Control {
         #[allow(clippy::cast_possible_wrap)]
         LOOP_CTL_REMOVE
             .ioctl(self.0.as_fd(), number as c_int)
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_CTL_REMOVE", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_CTL_REMOVE",
+                source,
+            })?;
         Ok(())
     }
 
@@ -92,9 +105,13 @@ impl Control {
     pub fn get_free(&self) -> Result<LoopDevice, Error> {
         // `LOOP_CTL_GET_FREE` takes no argument and returns the free loop
         // number as the (non-negative) ioctl result.
-        let number = LOOP_CTL_GET_FREE
-            .ioctl(self.0.as_fd())
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_CTL_GET_FREE", source })?;
+        let number =
+            LOOP_CTL_GET_FREE
+                .ioctl(self.0.as_fd())
+                .map_err(|source| Error::LoopIoctl {
+                    op: "LOOP_CTL_GET_FREE",
+                    source,
+                })?;
         Self::open_device(number)
     }
 

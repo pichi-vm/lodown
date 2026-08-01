@@ -19,7 +19,10 @@ fn attach_status_detach_round_trip() {
 
     let backing = common::BackingFile::create("roundtrip", BACKING_SIZE);
 
-    let config = Config::new().offset(OFFSET).size_limit(SIZE_LIMIT).read_only(true);
+    let config = Config::new()
+        .offset(OFFSET)
+        .size_limit(SIZE_LIMIT)
+        .read_only(true);
     let dev = common::attach_retrying(&control, &backing.file, &config);
 
     let status = dev.status().expect("read status");

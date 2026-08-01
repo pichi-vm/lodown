@@ -38,7 +38,9 @@ pub struct LoopDevice {
 
 impl fmt::Debug for LoopDevice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LoopDevice").field("number", &self.number).finish_non_exhaustive()
+        f.debug_struct("LoopDevice")
+            .field("number", &self.number)
+            .finish_non_exhaustive()
     }
 }
 
@@ -73,7 +75,10 @@ impl LoopDevice {
         let raw = config.to_loop_config(backing);
         LOOP_CONFIGURE
             .ioctl(self.file.as_fd(), &raw)
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_CONFIGURE", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_CONFIGURE",
+                source,
+            })?;
         Ok(())
     }
 
@@ -86,7 +91,10 @@ impl LoopDevice {
     pub fn detach(&self) -> Result<(), Error> {
         LOOP_CLR_FD
             .ioctl(self.file.as_fd())
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_CLR_FD", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_CLR_FD",
+                source,
+            })?;
         Ok(())
     }
 
@@ -100,7 +108,10 @@ impl LoopDevice {
         let mut info = LoopInfo::new_zeroed();
         LOOP_GET_STATUS64
             .ioctl(self.file.as_fd(), &mut info)
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_GET_STATUS64", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_GET_STATUS64",
+                source,
+            })?;
         Ok(Status::from_info(&info))
     }
 
@@ -113,7 +124,10 @@ impl LoopDevice {
     pub fn set_capacity(&self) -> Result<(), Error> {
         LOOP_SET_CAPACITY
             .ioctl(self.file.as_fd())
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_SET_CAPACITY", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_SET_CAPACITY",
+                source,
+            })?;
         Ok(())
     }
 
@@ -133,7 +147,10 @@ impl LoopDevice {
     pub fn set_direct_io(&self, enable: bool) -> Result<(), Error> {
         LOOP_SET_DIRECT_IO
             .ioctl(self.file.as_fd(), c_int::from(enable))
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_SET_DIRECT_IO", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_SET_DIRECT_IO",
+                source,
+            })?;
         Ok(())
     }
 
@@ -151,7 +168,10 @@ impl LoopDevice {
         let arg = block_size as c_int;
         LOOP_SET_BLOCK_SIZE
             .ioctl(self.file.as_fd(), arg)
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_SET_BLOCK_SIZE", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_SET_BLOCK_SIZE",
+                source,
+            })?;
         Ok(())
     }
 
@@ -173,7 +193,10 @@ impl LoopDevice {
     pub fn change_fd(&self, backing: &File) -> Result<(), Error> {
         LOOP_CHANGE_FD
             .ioctl(self.file.as_fd(), backing.as_raw_fd())
-            .map_err(|source| Error::LoopIoctl { op: "LOOP_CHANGE_FD", source })?;
+            .map_err(|source| Error::LoopIoctl {
+                op: "LOOP_CHANGE_FD",
+                source,
+            })?;
         Ok(())
     }
 }
@@ -255,7 +278,11 @@ pub struct Status {
 
 impl Status {
     fn from_info(info: &LoopInfo) -> Self {
-        let nul = info.lo_file_name.iter().position(|&b| b == 0).unwrap_or(info.lo_file_name.len());
+        let nul = info
+            .lo_file_name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(info.lo_file_name.len());
         let file_name = String::from_utf8_lossy(&info.lo_file_name[..nul]).into_owned();
         Self {
             offset: info.lo_offset,
