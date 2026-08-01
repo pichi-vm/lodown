@@ -8,7 +8,6 @@ use std::os::fd::{AsFd, AsRawFd};
 
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
-use crate::Error;
 use crate::device::LoopInfo;
 use crate::uapi::{LO_FLAGS_AUTOCLEAR, LO_FLAGS_DIRECT_IO, LO_FLAGS_PARTSCAN, LO_FLAGS_READ_ONLY};
 
@@ -99,11 +98,10 @@ impl Config {
     ///
     /// Direct I/O requires the backing filesystem to support `O_DIRECT` and
     /// both [`offset`](Self::offset) and [`size_limit`](Self::size_limit) to
-    /// be aligned to the [`block_size`](Self::block_size). When enabled with
-    /// a nonzero block size, [`configure`](crate::LoopDevice::configure) /
-    /// [`attach`](crate::Control::attach) reject unaligned offsets and size
-    /// limits up front; if the backing filesystem cannot honor `O_DIRECT`,
-    /// the kernel silently clears the flag rather than failing the configure.
+    /// be aligned to the [`block_size`](Self::block_size). If those conditions
+    /// aren't met the kernel silently clears the flag rather than failing the
+    /// configure, so verify it took effect with
+    /// [`Status::is_direct_io`](crate::Status::is_direct_io) afterward.
     #[must_use]
     pub fn direct_io(mut self, direct_io: bool) -> Self {
         self.direct_io = direct_io;
@@ -114,9 +112,7 @@ impl Config {
     /// default block size in place.
     ///
     /// A nonzero block size must be a power of two between 512 and the page
-    /// size. This crate caps the upper bound at 4096 (the page size on the
-    /// common 4 KiB-page architectures); a kernel on a larger-page
-    /// architecture would accept more, but such values are rejected here.
+    /// size; the kernel rejects anything else with `EINVAL` at configure time.
     #[must_use]
     pub fn block_size(mut self, block_size: u32) -> Self {
         self.block_size = block_size;
@@ -141,34 +137,6 @@ impl Config {
         flags
     }
 
-    /// Validate the values the kernel would reject, returning
-    /// [`Error::Usage`] before any ioctl is attempted. Called by
-    /// [`crate::LoopDevice::configure`] and [`crate::Control::attach`].
-    pub(crate) fn validate(&self) -> Result<(), Error> {
-        validate_block_size(self.block_size)?;
-
-        // When direct I/O is requested, the kernel requires `offset` and
-        // `size_limit` to be aligned to the block size. A `0` block size
-        // leaves the kernel default in place, so alignment can't be checked
-        // here; skip the check in that case.
-        if self.direct_io && self.block_size != 0 {
-            let bs = u64::from(self.block_size);
-            if !self.offset.is_multiple_of(bs) {
-                return Err(Error::Usage(format!(
-                    "direct_io requires offset ({}) to be a multiple of block_size ({})",
-                    self.offset, self.block_size
-                )));
-            }
-            if !self.size_limit.is_multiple_of(bs) {
-                return Err(Error::Usage(format!(
-                    "direct_io requires size_limit ({}) to be a multiple of block_size ({})",
-                    self.size_limit, self.block_size
-                )));
-            }
-        }
-        Ok(())
-    }
-
     /// Render this config plus a backing-file descriptor into a
     /// `LOOP_CONFIGURE` argument.
     pub(crate) fn to_loop_config(self, backing: impl AsFd) -> LoopConfig {
@@ -183,20 +151,6 @@ impl Config {
             __reserved: [0; 8],
         }
     }
-}
-
-/// Validate a loop-device logical block size, returning [`Error::Usage`]
-/// for values the kernel rejects. `0` is valid (the kernel default is kept);
-/// any other value must be a power of two between 512 and the page size. The
-/// upper bound is capped at 4096 here (the page size on 4 KiB-page
-/// architectures); a kernel on a larger-page architecture would accept more.
-pub(crate) fn validate_block_size(block_size: u32) -> Result<(), Error> {
-    if block_size != 0 && (!(512..=4096).contains(&block_size) || !block_size.is_power_of_two()) {
-        return Err(Error::Usage(format!(
-            "block_size must be 0 or a power of two between 512 and 4096, got {block_size}"
-        )));
-    }
-    Ok(())
 }
 
 /// `#[repr(C)]` mirror of `struct loop_config` from `<linux/loop.h>` (sizeof
@@ -325,57 +279,5 @@ mod tests {
             LO_FLAGS_READ_ONLY | LO_FLAGS_AUTOCLEAR | LO_FLAGS_PARTSCAN | LO_FLAGS_DIRECT_IO
         );
         assert_eq!(raw.fd.cast_signed(), file.as_raw_fd());
-    }
-
-    #[test]
-    fn block_size_validation_rejects_bad_values() {
-        for bad in [300, 1000, 8192] {
-            assert!(
-                matches!(validate_block_size(bad), Err(Error::Usage(_))),
-                "block_size {bad} should be rejected",
-            );
-        }
-    }
-
-    #[test]
-    fn block_size_validation_accepts_good_values() {
-        for ok in [0, 512, 1024, 2048, 4096] {
-            assert!(
-                validate_block_size(ok).is_ok(),
-                "block_size {ok} should be accepted"
-            );
-        }
-    }
-
-    #[test]
-    fn direct_io_rejects_unaligned_offset() {
-        let cfg = Config::new().direct_io(true).block_size(512).offset(500);
-        assert!(matches!(cfg.validate(), Err(Error::Usage(_))));
-    }
-
-    #[test]
-    fn direct_io_rejects_unaligned_size_limit() {
-        let cfg = Config::new()
-            .direct_io(true)
-            .block_size(512)
-            .size_limit(1000);
-        assert!(matches!(cfg.validate(), Err(Error::Usage(_))));
-    }
-
-    #[test]
-    fn direct_io_accepts_aligned() {
-        let cfg = Config::new()
-            .direct_io(true)
-            .block_size(512)
-            .offset(1024)
-            .size_limit(2048);
-        assert!(cfg.validate().is_ok());
-    }
-
-    #[test]
-    fn direct_io_alignment_skipped_when_block_size_zero() {
-        // Block size 0 leaves the kernel default; alignment can't be checked.
-        let cfg = Config::new().direct_io(true).offset(500).size_limit(1000);
-        assert!(cfg.validate().is_ok());
     }
 }

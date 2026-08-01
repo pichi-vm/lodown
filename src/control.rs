@@ -201,12 +201,10 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::Usage`] if `config` holds a value the kernel would reject
-    /// (see [`LoopDevice::configure`]). [`Error::LoopIoctl`] if the
-    /// allocation fails, or if the configure fails — including the `EBUSY`
-    /// race described above, which the caller may choose to retry.
+    /// [`Error::LoopIoctl`] if the allocation fails, or if the configure fails
+    /// — a value the kernel rejects comes back as `EINVAL`, and the `EBUSY`
+    /// race described above (which the caller may choose to retry).
     pub fn attach(&self, backing: impl AsFd, config: &Config) -> Result<Detached, Error> {
-        config.validate()?;
         // Hold a plain handle during the get-free/configure window: if the
         // configure loses the race (or fails for any reason), this handle just
         // closes its fd on drop — it never detaches or removes a device it may

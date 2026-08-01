@@ -99,13 +99,10 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::Usage`] if `config` holds a value the kernel would reject
-    /// (an invalid block size, or a `direct_io` request whose offset or size
-    /// limit isn't aligned to the block size). [`Error::LoopIoctl`] if the
-    /// kernel rejects the configuration (e.g. the device is already bound, or
-    /// `EBUSY`).
+    /// [`Error::LoopIoctl`] if the kernel rejects the configuration — an
+    /// invalid block size or misaligned `direct_io` request comes back as
+    /// `EINVAL`, an already-bound device as `EBUSY`.
     pub fn configure(&self, backing: impl AsFd, config: &Config) -> Result<(), Error> {
-        config.validate()?;
         let raw = config.to_loop_config(backing);
         LOOP_CONFIGURE
             .ioctl(self.file.as_fd(), &raw)
@@ -192,12 +189,11 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::Usage`] if `block_size` is neither `0` nor a power of two
-    /// between 512 and 4096 (see [`Config::block_size`] for the page-size
-    /// caveat). [`Error::LoopIoctl`] if the kernel otherwise rejects it.
+    /// [`Error::LoopIoctl`] if the kernel rejects `block_size` (`EINVAL`
+    /// unless it is a power of two between 512 and the page size).
     pub fn set_block_size(&self, block_size: u32) -> Result<(), Error> {
-        crate::config::validate_block_size(block_size)?;
-        // Block size is validated to <= 4096 above, so it fits in c_int.
+        // The kernel validates the value; a too-large block size that doesn't
+        // fit in c_int simply can't be a valid one, so the wrap is harmless.
         #[allow(clippy::cast_possible_wrap)]
         let arg = block_size as c_int;
         LOOP_SET_BLOCK_SIZE
