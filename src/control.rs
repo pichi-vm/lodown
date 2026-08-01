@@ -10,15 +10,18 @@ use std::sync::Arc;
 
 use crate::Error;
 use crate::config::Config;
-use crate::device::{LoopDevice, Removed};
+use crate::device::{Detached, LoopDevice, Removed};
 use std::os::raw::c_int;
 
 use crate::uapi::{LOOP_CTL_ADD, LOOP_CTL_GET_FREE, LOOP_CTL_REMOVE};
 
 /// The loop-control fd (`/dev/loop-control`). A factory for [`LoopDevice`]s:
-/// `add`, `remove`, `get_free`, and the `attach` convenience that allocates
-/// a free device and configures it in one step. The device-producing
-/// constructors return a [`Removed`] guard that tears the device down on drop.
+/// `add`, `remove`, `get_free`, `by_number`, and the `attach` convenience that
+/// allocates a free device and configures it in one step. `add` returns a
+/// [`Removed`] guard (drop removes the node it created) and `attach` returns a
+/// [`Detached`] guard (drop detaches the binding it made); `get_free` and
+/// `by_number` return a plain [`LoopDevice`], since they acquire nothing that
+/// this crate owns.
 #[derive(Debug)]
 pub struct Control(Arc<File>);
 
@@ -63,10 +66,10 @@ impl Control {
     }
 
     /// Open an existing `/dev/loop{number}` and return a plain
-    /// [`LoopDevice`] handle — no `LOOP_CTL_ADD`, and (unlike
-    /// [`add`](Self::add) / [`get_free`](Self::get_free) /
-    /// [`attach`](Self::attach)) no auto-removing [`Removed`] guard, since
-    /// this handle did not create the device and so must not tear it down.
+    /// [`LoopDevice`] handle — no `LOOP_CTL_ADD`, and (unlike [`add`](Self::add)
+    /// / [`attach`](Self::attach)) no auto-cleaning guard, since this handle
+    /// did not create the device or its binding and so must not tear either
+    /// down.
     ///
     /// This does not check whether the device is bound; a later operation
     /// surfaces the kernel's error (e.g. `ENXIO`) if it isn't.
@@ -79,8 +82,8 @@ impl Control {
         self.open_device(number)
     }
 
-    /// `LOOP_CTL_ADD` — create `/dev/loop{number}` and return an
-    /// auto-removing [`Removed`] handle to it.
+    /// `LOOP_CTL_ADD` — create `/dev/loop{number}` and return a [`Removed`]
+    /// guard whose drop removes the node it created.
     ///
     /// # Errors
     ///
@@ -95,7 +98,15 @@ impl Control {
                 op: "LOOP_CTL_ADD",
                 source,
             })?;
-        Ok(Removed::from(self.open_device(number)?))
+        // The node now exists; if opening it fails, best-effort remove it so
+        // we don't leak a node we just created.
+        match self.open_device(number) {
+            Ok(device) => Ok(Removed::from(device)),
+            Err(err) => {
+                let _ = self.remove(number);
+                Err(err)
+            }
+        }
     }
 
     /// `LOOP_CTL_REMOVE` — remove `/dev/loop{number}`.
@@ -116,13 +127,20 @@ impl Control {
         Ok(())
     }
 
-    /// `LOOP_CTL_GET_FREE` — allocate (or reuse) a free loop device and
-    /// return an auto-removing [`Removed`] handle to it.
+    /// `LOOP_CTL_GET_FREE` — obtain a free loop device and return a plain
+    /// [`LoopDevice`] handle.
+    ///
+    /// This returns no guard: `LOOP_CTL_GET_FREE` hands back an *existing*
+    /// device from the kernel's pool (the same one the next caller would get)
+    /// rather than allocating one this handle owns, so it must not be removed
+    /// on drop. Use [`attach`](Self::attach) to bind a backing file and get a
+    /// [`Detached`] guard for the binding, or [`add`](Self::add) to create and
+    /// own a specific node.
     ///
     /// # Errors
     ///
     /// [`Error::LoopIoctl`] if the kernel can't provide a free device.
-    pub fn get_free(&self) -> Result<Removed, Error> {
+    pub fn get_free(&self) -> Result<LoopDevice, Error> {
         // `LOOP_CTL_GET_FREE` takes no argument and returns the free loop
         // number as the (non-negative) ioctl result.
         let number =
@@ -132,7 +150,7 @@ impl Control {
                     op: "LOOP_CTL_GET_FREE",
                     source,
                 })?;
-        Ok(Removed::from(self.open_device(number)?))
+        self.open_device(number)
     }
 
     /// Allocate a free loop device via [`Control::get_free`] and bind
@@ -144,9 +162,12 @@ impl Control {
     /// a concurrent process can claim the same device first. When that
     /// happens the configure fails with
     /// [`Error::LoopIoctl`]`{ op: "LOOP_CONFIGURE", .. }` whose
-    /// `source.kind()` is [`std::io::ErrorKind::ResourceBusy`] (`EBUSY`). The
-    /// crate deliberately bakes in no retry policy; a caller that wants to
-    /// tolerate the race can retry `attach` on exactly that condition:
+    /// `source.kind()` is [`std::io::ErrorKind::ResourceBusy`] (`EBUSY`). On
+    /// that failure this method only closes its own handle to the node — it
+    /// does *not* detach or remove it, so it never disturbs the device the
+    /// winner just configured. The crate bakes in no retry policy; a caller
+    /// that wants to tolerate the race can retry `attach` on exactly that
+    /// condition:
     ///
     /// ```no_run
     /// use std::fs::File;
@@ -172,10 +193,11 @@ impl Control {
     /// # }
     /// ```
     ///
-    /// The returned [`Removed`] guard detaches and removes the device on drop;
-    /// unwrap it (`LoopDevice::from(..)`) to keep the device past the scope.
-    /// If the configure fails, the guard built around the allocated device is
-    /// dropped here, tearing that device back down before the error returns.
+    /// The returned [`Detached`] guard detaches the backing file on drop
+    /// (leaving the pool node in place, since `get_free` did not create it);
+    /// unwrap it (`LoopDevice::from(..)`) to keep the binding past the scope.
+    /// The guard is armed only after `configure` succeeds, so a failed attach
+    /// leaves nothing to tear down.
     ///
     /// # Errors
     ///
@@ -183,10 +205,14 @@ impl Control {
     /// (see [`LoopDevice::configure`]). [`Error::LoopIoctl`] if the
     /// allocation fails, or if the configure fails — including the `EBUSY`
     /// race described above, which the caller may choose to retry.
-    pub fn attach(&self, backing: impl AsFd, config: &Config) -> Result<Removed, Error> {
+    pub fn attach(&self, backing: impl AsFd, config: &Config) -> Result<Detached, Error> {
         config.validate()?;
+        // Hold a plain handle during the get-free/configure window: if the
+        // configure loses the race (or fails for any reason), this handle just
+        // closes its fd on drop — it never detaches or removes a device it may
+        // not own. Arm the detach guard only once the binding is established.
         let device = self.get_free()?;
         device.configure(backing, config)?;
-        Ok(device)
+        Ok(Detached::from(device))
     }
 }

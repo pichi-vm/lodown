@@ -90,6 +90,25 @@ fn by_number_opens_existing_without_owning_it() {
 }
 
 #[test]
+fn dropping_attach_guard_leaves_the_pool_node() {
+    let Some(control) = common::open_control() else {
+        return;
+    };
+
+    let backing = common::BackingFile::create("detachguard", BACKING_SIZE);
+    let dev = common::attach_retrying(&control, &backing.file, &Config::new());
+    let n = dev.number();
+    assert!(dev.status().is_ok(), "device is bound after attach");
+
+    // The `Detached` guard detaches the backing on drop but must NOT remove
+    // the node — `get_free` didn't create it.
+    drop(dev);
+    control
+        .by_number(n)
+        .expect("pool node should still exist after the Detached guard drops");
+}
+
+#[test]
 fn change_fd_swaps_backing_file() {
     let Some(control) = common::open_control() else {
         return;

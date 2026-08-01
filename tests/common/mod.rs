@@ -13,7 +13,7 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use lodown::{Config, Control, Error, Removed};
+use lodown::{Config, Control, Detached, Error};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -32,7 +32,7 @@ pub(crate) fn open_control() -> Option<Control> {
 /// policy, so this is the caller-side loop the crate docs describe — and it
 /// keeps these integration tests, which run in parallel and thus contend for
 /// free loop devices, from flaking against each other.
-pub(crate) fn attach_retrying(control: &Control, backing: &File, config: &Config) -> Removed {
+pub(crate) fn attach_retrying(control: &Control, backing: &File, config: &Config) -> Detached {
     for _ in 0..100 {
         match control.attach(backing, config) {
             Ok(device) => return device,

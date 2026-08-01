@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::fs::File;
+use std::marker::PhantomData;
 use std::os::fd::{AsFd, AsRawFd};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,14 +28,18 @@ use crate::uapi::{
 /// `File`, remembers its number, and holds a shared handle to
 /// `/dev/loop-control` so it can remove the node.
 ///
-/// A `LoopDevice` is the *leaked* form of a device: dropping it closes the
-/// node but does *not* detach the backing file or remove the node. The
-/// [`Control`](crate::Control) constructors instead hand back a [`Removed`]
-/// guard that tears the device down on drop; a `LoopDevice` is what you get
-/// by unwrapping that guard (`LoopDevice::from(removed)`) to opt out of
-/// automatic teardown. Call [`LoopDevice::detach`] / [`LoopDevice::remove`]
-/// for manual teardown (or configure with [`Config::autoclear`] so the kernel
-/// detaches when the last user closes the node).
+/// A `LoopDevice` is the *bare* form of a device: dropping it closes the node
+/// but does *not* detach the backing file or remove the node. The
+/// resource-acquiring [`Control`](crate::Control) constructors instead hand
+/// back a [`Guard`]: [`add`](crate::Control::add) returns [`Removed`] (drop
+/// removes the node) and [`attach`](crate::Control::attach) returns
+/// [`Detached`] (drop detaches the binding). A `LoopDevice` is what you get by
+/// unwrapping a guard (`LoopDevice::from(guard)`) to opt out of teardown, or
+/// directly from [`get_free`](crate::Control::get_free) /
+/// [`by_number`](crate::Control::by_number), which acquire nothing to clean up.
+/// Call [`LoopDevice::detach`] / [`LoopDevice::remove`] for manual teardown
+/// (or configure with [`Config::autoclear`] so the kernel detaches when the
+/// last user closes the node).
 ///
 /// A `LoopDevice` exclusively owns its `/dev/loopN` file descriptor and is
 /// intentionally not `Clone`.
@@ -264,53 +269,83 @@ impl LoopDevice {
     }
 }
 
-/// The auto-removing wrapper the [`Control`](crate::Control) constructors
-/// (`add`, `get_free`, `attach`) return. `Drop` tears the device down —
-/// detaching any backing file, then removing the `/dev/loopN` node — and
-/// discards errors. Use `LoopDevice::from(removed).remove()` for
-/// observable-error teardown, or `LoopDevice::from(removed)` (`.into()`)
-/// alone to opt out of teardown and keep the device past this scope.
-///
-/// `#[must_use]`: dropping a `Removed` immediately tears the device down, so
-/// a discarded value (`let _ = control.attach(..)?;`) would silently detach
-/// and remove the device it just set up. Bind it to a name to keep the
-/// device alive for the binding's scope.
-#[must_use = "dropping a `Removed` tears the device down; bind it to keep the device alive"]
-pub struct Removed(Option<LoopDevice>);
+/// How a [`Guard`] tears its device down on drop: [`Remove`] removes the node,
+/// [`Detach`] detaches the binding.
+pub trait Teardown {
+    /// Run the teardown (best-effort; the caller discards any error).
+    fn run(device: LoopDevice);
+}
 
-impl fmt::Debug for Removed {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Removed").field(&self.0).finish()
+/// Teardown for a node this crate created: remove it. Selects [`Removed`].
+#[derive(Debug)]
+pub struct Remove;
+
+/// Teardown for a binding this crate made: detach it, leaving the pool node.
+/// Selects [`Detached`].
+#[derive(Debug)]
+pub struct Detach;
+
+impl Teardown for Remove {
+    fn run(device: LoopDevice) {
+        // `remove` detaches first, so this also clears any binding.
+        let _ = device.remove();
     }
 }
 
-impl From<LoopDevice> for Removed {
+impl Teardown for Detach {
+    fn run(device: LoopDevice) {
+        let _ = device.detach();
+    }
+}
+
+/// An auto-cleaning guard over a [`LoopDevice`], returned by the resource-
+/// acquiring [`Control`](crate::Control) constructors. On drop it runs teardown
+/// `K` (best-effort, errors discarded): [`Removed`] removes the node `add`
+/// created, [`Detached`] detaches the binding `attach` made. It `Deref`s to
+/// `LoopDevice`; unwrap with `LoopDevice::from(guard)` to opt out, or call
+/// [`LoopDevice::remove`] / [`LoopDevice::detach`] for the same teardown with
+/// an observable error.
+#[must_use = "dropping a guard tears the device down; bind it to keep the device alive"]
+#[derive(Debug)]
+pub struct Guard<K: Teardown> {
+    device: Option<LoopDevice>,
+    _kind: PhantomData<K>,
+}
+
+/// A [`Guard`] whose drop removes the `/dev/loopN` node; returned by
+/// [`Control::add`](crate::Control::add).
+pub type Removed = Guard<Remove>;
+
+/// A [`Guard`] whose drop detaches the backing file; returned by
+/// [`Control::attach`](crate::Control::attach).
+pub type Detached = Guard<Detach>;
+
+impl<K: Teardown> From<LoopDevice> for Guard<K> {
     fn from(device: LoopDevice) -> Self {
-        Removed(Some(device))
+        Self {
+            device: Some(device),
+            _kind: PhantomData,
+        }
     }
 }
 
-impl From<Removed> for LoopDevice {
-    fn from(mut removed: Removed) -> Self {
-        removed.0.take().unwrap()
+impl<K: Teardown> From<Guard<K>> for LoopDevice {
+    fn from(mut guard: Guard<K>) -> Self {
+        guard.device.take().unwrap()
     }
 }
 
-impl std::ops::Deref for Removed {
+impl<K: Teardown> std::ops::Deref for Guard<K> {
     type Target = LoopDevice;
     fn deref(&self) -> &LoopDevice {
-        self.0.as_ref().unwrap()
+        self.device.as_ref().unwrap()
     }
 }
 
-impl Drop for Removed {
+impl<K: Teardown> Drop for Guard<K> {
     fn drop(&mut self) {
-        if let Some(device) = self.0.take() {
-            // `remove` detaches, closes the node fd, then removes it. It is
-            // best-effort here: if the kernel still refuses removal (a
-            // preallocated `loop0-7`, or a node held open elsewhere), the
-            // detach already ran, degrading cleanly to detach-only.
-            let _ = device.remove();
+        if let Some(device) = self.device.take() {
+            K::run(device);
         }
     }
 }

@@ -26,32 +26,33 @@ fn main() -> Result<(), lodown::Error> {
     let backing = File::open("disk.img")?;
 
     // Allocate a free device and configure it in one step. The returned
-    // `Removed` guard detaches the backing file and removes the node when
-    // dropped; call `LoopDevice::from(dev)` to keep the device past this
-    // scope.
+    // `Detached` guard detaches the backing file when dropped (leaving the
+    // pool node in place); call `LoopDevice::from(dev)` to keep the binding
+    // past this scope.
     let dev = control.attach(&backing, &Config::new().offset(0).read_only(true))?;
 
     let status = dev.status()?;
     println!("/dev/loop{} — offset {}, read_only {}",
              dev.number(), status.offset(), status.is_read_only());
 
-    Ok(())                                        // `dev` drops -> detach + remove
+    Ok(())                                        // `dev` drops -> detach
 }
 ```
 
 ## The model
 
 - **`Control`** — the `/dev/loop-control` fd; a factory for devices:
-  `open`, `add`, `remove`, `get_free`, and the `attach` convenience
-  (`get_free` + `LOOP_CONFIGURE`). The device-producing constructors
-  (`add`, `get_free`, `attach`) return a `Removed` guard; `by_number` opens
-  an *existing* `/dev/loopN` and returns a plain `LoopDevice` (no guard,
-  since it didn't create the device).
-- **`Removed`** — an auto-removing guard that `Deref`s to `LoopDevice`. On
-  drop it detaches any backing file and removes the `/dev/loopN` node
-  (best-effort); unwrap it with `LoopDevice::from(..)` to leak the device
-  past the current scope, or call `LoopDevice::remove` for the same teardown
-  with an observable error.
+  `open`, `add`, `remove`, `get_free`, `by_number`, and the `attach`
+  convenience (`get_free` + `LOOP_CONFIGURE`). `add` returns a `Removed`
+  guard and `attach` returns a `Detached` guard; `get_free` and `by_number`
+  return a plain `LoopDevice`, since they acquire nothing this crate owns.
+- **`Guard<K>`** — an auto-cleaning guard that `Deref`s to `LoopDevice`, with
+  two aliases for its teardown strategy: **`Removed`** (from `add`) removes
+  the `/dev/loopN` node on drop, and **`Detached`** (from `attach`) detaches
+  the backing file on drop (leaving the pool node in place). Both are
+  best-effort; unwrap with `LoopDevice::from(..)` to opt out, or call
+  `LoopDevice::remove` / `LoopDevice::detach` for the same teardown with an
+  observable error.
 - **`LoopDevice`** — the leaked form of a device: a handle to an opened
   `/dev/loopN`, with `number`, `path`, `major`, and `minor` accessors.
   Everything else lives here: `configure`, `detach`, `remove`, `status`,
