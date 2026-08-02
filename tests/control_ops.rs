@@ -7,7 +7,7 @@
 
 mod common;
 
-use lodown::{Config, Error, LoopDevice};
+use lodown::{Config, LoopDevice};
 
 const BACKING_SIZE: u64 = 4 * 1024 * 1024; // 4 MiB
 
@@ -33,14 +33,14 @@ fn add_remove_round_trip() {
     assert_eq!(dev.number(), n);
 
     // Adding the same number again must fail (EEXIST).
-    assert!(matches!(control.add(n), Err(Error::LoopIoctl { .. })));
+    assert!(control.add(n).is_err());
 
     // Drop our handle before removing so the node isn't busy.
     drop(dev);
     control.remove(n).expect("remove loop device");
 
     // Removing a now-nonexistent number must fail.
-    assert!(matches!(control.remove(n), Err(Error::LoopIoctl { .. })));
+    assert!(control.remove(n).is_err());
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn dropping_guard_removes_the_node() {
     drop(dev);
 
     // The node is gone, so an explicit remove of the same number now fails.
-    assert!(matches!(control.remove(n), Err(Error::LoopIoctl { .. })));
+    assert!(control.remove(n).is_err());
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn by_number_opens_existing_without_owning_it() {
 
     // The owning guard still tears the node down on drop.
     drop(owner);
-    assert!(matches!(control.remove(n), Err(Error::LoopIoctl { .. })));
+    assert!(control.remove(n).is_err());
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn set_direct_io_toggles() {
             dev.set_direct_io(false).expect("disable direct io");
             assert!(!dev.status().expect("status").is_direct_io());
         }
-        Err(Error::LoopIoctl { source, .. }) if matches!(source.raw_os_error(), Some(22 | 95)) => {
+        Err(e) if matches!(e.raw_os_error(), Some(22 | 95)) => {
             eprintln!("skip: backing filesystem does not support direct I/O");
         }
         Err(other) => panic!("set_direct_io failed unexpectedly: {other}"),
@@ -173,7 +173,7 @@ fn set_capacity_succeeds() {
 }
 
 #[test]
-fn status_on_unbound_device_reports_op() {
+fn status_on_unbound_device_reports_enxio() {
     let Some(control) = common::open_control() else {
         return;
     };
@@ -183,11 +183,10 @@ fn status_on_unbound_device_reports_op() {
 
     // No backing file bound yet, so LOOP_GET_STATUS64 fails with ENXIO (6).
     match dev.status() {
-        Err(Error::LoopIoctl { op, source }) => {
-            assert_eq!(op, "LOOP_GET_STATUS64");
-            assert_eq!(source.raw_os_error(), Some(6), "expected ENXIO");
+        Err(e) => {
+            assert_eq!(e.raw_os_error(), Some(6), "expected ENXIO");
         }
-        other => panic!("expected LoopIoctl error, got {other:?}"),
+        other => panic!("expected error, got {other:?}"),
     }
 
     drop(dev);

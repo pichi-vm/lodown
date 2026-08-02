@@ -4,10 +4,10 @@
 //! [`LoopDevice`]s.
 
 use std::fs::{File, OpenOptions};
+use std::io;
 use std::os::fd::AsFd;
 use std::sync::Arc;
 
-use crate::Error;
 use crate::config::Config;
 use crate::device::{Detached, LoopDevice, Removed};
 use std::os::raw::c_int;
@@ -29,10 +29,10 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] if the control node can't be opened (typically because
-    /// the process lacks `CAP_SYS_ADMIN`, or the `loop` module isn't
-    /// loaded).
-    pub fn open() -> Result<Self, Error> {
+    /// The kernel's error is returned as-is if the control node can't be
+    /// opened (typically because the process lacks `CAP_SYS_ADMIN`, or the
+    /// `loop` module isn't loaded).
+    pub fn open() -> io::Result<Self> {
         // Propagate the raw io::Error so its errno (and kind) survive; the
         // likely-cause hint lives in the `# Errors` docs, not the message.
         let file = OpenOptions::new()
@@ -44,7 +44,7 @@ impl Control {
 
     /// Open `/dev/loop{number}` and wrap it in a [`LoopDevice`], sharing this
     /// control's `/dev/loop-control` handle so the device can remove itself.
-    fn open_device(&self, number: u32) -> Result<LoopDevice, Error> {
+    fn open_device(&self, number: u32) -> io::Result<LoopDevice> {
         let path = format!("/dev/loop{number}");
         let file = OpenOptions::new().read(true).write(true).open(&path)?;
         Ok(LoopDevice::new(number, file, Arc::clone(&self.0)))
@@ -61,9 +61,9 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] if `/dev/loop{number}` can't be opened (e.g. it does
-    /// not exist).
-    pub fn by_number(&self, number: u32) -> Result<LoopDevice, Error> {
+    /// The kernel's error is returned as-is if `/dev/loop{number}` can't be
+    /// opened (e.g. `NotFound` if it does not exist).
+    pub fn by_number(&self, number: u32) -> io::Result<LoopDevice> {
         self.open_device(number)
     }
 
@@ -72,17 +72,12 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the request (e.g. the
-    /// number is already in use — `EEXIST`).
-    pub fn add(&self, number: u32) -> Result<Removed, Error> {
+    /// The kernel's error is returned as-is if it rejects the request (e.g.
+    /// `AlreadyExists` if the number is already in use — `EEXIST`).
+    pub fn add(&self, number: u32) -> io::Result<Removed> {
         // Loop numbers are small and always fit in a positive c_int.
         #[allow(clippy::cast_possible_wrap)]
-        LOOP_CTL_ADD
-            .ioctl(self.0.as_fd(), number as c_int)
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_CTL_ADD",
-                source,
-            })?;
+        LOOP_CTL_ADD.ioctl(self.0.as_fd(), number as c_int)?;
         // The node now exists; if opening it fails, best-effort remove it so
         // we don't leak a node we just created.
         match self.open_device(number) {
@@ -98,17 +93,12 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the request (e.g. the
-    /// device is still in use — `EBUSY`).
-    pub fn remove(&self, number: u32) -> Result<(), Error> {
+    /// The kernel's error is returned as-is if it rejects the request (e.g.
+    /// `ResourceBusy` if the device is still in use — `EBUSY`).
+    pub fn remove(&self, number: u32) -> io::Result<()> {
         // Loop numbers are small and always fit in a positive c_int.
         #[allow(clippy::cast_possible_wrap)]
-        LOOP_CTL_REMOVE
-            .ioctl(self.0.as_fd(), number as c_int)
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_CTL_REMOVE",
-                source,
-            })?;
+        LOOP_CTL_REMOVE.ioctl(self.0.as_fd(), number as c_int)?;
         Ok(())
     }
 
@@ -124,17 +114,11 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel can't provide a free device.
-    pub fn get_free(&self) -> Result<LoopDevice, Error> {
+    /// The kernel's error is returned as-is if it can't provide a free device.
+    pub fn get_free(&self) -> io::Result<LoopDevice> {
         // `LOOP_CTL_GET_FREE` takes no argument and returns the free loop
         // number as the (non-negative) ioctl result.
-        let number =
-            LOOP_CTL_GET_FREE
-                .ioctl(self.0.as_fd())
-                .map_err(|source| Error::LoopIoctl {
-                    op: "LOOP_CTL_GET_FREE",
-                    source,
-                })?;
+        let number = LOOP_CTL_GET_FREE.ioctl(self.0.as_fd())?;
         self.open_device(number)
     }
 
@@ -145,9 +129,8 @@ impl Control {
     /// This is a single attempt: `LOOP_CTL_GET_FREE` does not *reserve* the
     /// number it returns, so between the allocation and the `LOOP_CONFIGURE`
     /// a concurrent process can claim the same device first. When that
-    /// happens the configure fails with
-    /// [`Error::LoopIoctl`]`{ op: "LOOP_CONFIGURE", .. }` whose
-    /// `source.kind()` is [`std::io::ErrorKind::ResourceBusy`] (`EBUSY`). On
+    /// happens the configure fails with an [`io::Error`] whose `kind()` is
+    /// [`std::io::ErrorKind::ResourceBusy`] (`EBUSY`). On
     /// that failure this method only closes its own handle to the node — it
     /// does *not* detach or remove it, so it never disturbs the device the
     /// winner just configured. The crate bakes in no retry policy; a caller
@@ -157,9 +140,9 @@ impl Control {
     /// ```no_run
     /// use std::fs::File;
     /// use std::io::ErrorKind;
-    /// use lodown::{Config, Control, Error};
+    /// use lodown::{Config, Control};
     ///
-    /// # fn main() -> Result<(), Error> {
+    /// # fn main() -> std::io::Result<()> {
     /// let control = Control::open()?;
     /// let backing = File::open("/path/to/backing.img")?;
     /// let config = Config::new();
@@ -168,8 +151,7 @@ impl Control {
     ///     match control.attach(&backing, &config) {
     ///         Ok(device) => break device,
     ///         // Another process claimed the free number first; try again.
-    ///         Err(Error::LoopIoctl { source, .. })
-    ///             if source.kind() == ErrorKind::ResourceBusy => continue,
+    ///         Err(e) if e.kind() == ErrorKind::ResourceBusy => continue,
     ///         Err(other) => return Err(other),
     ///     }
     /// };
@@ -186,10 +168,11 @@ impl Control {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the allocation fails, or if the configure fails
-    /// — a value the kernel rejects comes back as `EINVAL`, and the `EBUSY`
-    /// race described above (which the caller may choose to retry).
-    pub fn attach(&self, backing: impl AsFd, config: &Config) -> Result<Detached, Error> {
+    /// The kernel's error is returned as-is if the allocation fails, or if the
+    /// configure fails — a value the kernel rejects comes back as `EINVAL`, and
+    /// the `EBUSY` race described above (`ResourceBusy`, which the caller may
+    /// choose to retry).
+    pub fn attach(&self, backing: impl AsFd, config: &Config) -> io::Result<Detached> {
         // Hold a plain handle during the get-free/configure window: if the
         // configure loses the race (or fails for any reason), this handle just
         // closes its fd on drop — it never detaches or removes a device it may

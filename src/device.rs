@@ -8,6 +8,7 @@
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::File;
+use std::io;
 use std::marker::PhantomData;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::ffi::OsStringExt;
@@ -16,7 +17,6 @@ use std::sync::Arc;
 
 use zerocopy::{FromBytes, FromZeros, Immutable, IntoBytes, KnownLayout};
 
-use crate::Error;
 use crate::config::Config;
 use std::os::raw::c_int;
 
@@ -105,17 +105,12 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the configuration — an
-    /// invalid block size or misaligned `direct_io` request comes back as
-    /// `EINVAL`, an already-bound device as `EBUSY`.
-    pub fn configure(&self, backing: impl AsFd, config: &Config) -> Result<(), Error> {
+    /// The kernel's error is returned as-is if it rejects the configuration —
+    /// an invalid block size or misaligned `direct_io` request comes back as
+    /// `EINVAL`, an already-bound device as `ResourceBusy` (`EBUSY`).
+    pub fn configure(&self, backing: impl AsFd, config: &Config) -> io::Result<()> {
         let raw = config.to_loop_config(backing);
-        LOOP_CONFIGURE
-            .ioctl(self.file.as_fd(), &raw)
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_CONFIGURE",
-                source,
-            })?;
+        LOOP_CONFIGURE.ioctl(self.file.as_fd(), &raw)?;
         Ok(())
     }
 
@@ -123,15 +118,10 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the detach (e.g. the
-    /// device is still in use — `EBUSY`).
-    pub fn detach(&self) -> Result<(), Error> {
-        LOOP_CLR_FD
-            .ioctl(self.file.as_fd())
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_CLR_FD",
-                source,
-            })?;
+    /// The kernel's error is returned as-is if it rejects the detach (e.g.
+    /// `ResourceBusy` if the device is still in use — `EBUSY`).
+    pub fn detach(&self) -> io::Result<()> {
+        LOOP_CLR_FD.ioctl(self.file.as_fd())?;
         Ok(())
     }
 
@@ -139,16 +129,11 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the query (e.g. the device
-    /// has no backing file — `ENXIO`).
-    pub fn status(&self) -> Result<Status, Error> {
+    /// The kernel's error is returned as-is if it rejects the query (e.g.
+    /// `ENXIO` if the device has no backing file).
+    pub fn status(&self) -> io::Result<Status> {
         let mut info = LoopInfo::new_zeroed();
-        LOOP_GET_STATUS64
-            .ioctl(self.file.as_fd(), &mut info)
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_GET_STATUS64",
-                source,
-            })?;
+        LOOP_GET_STATUS64.ioctl(self.file.as_fd(), &mut info)?;
         Ok(Status::from_info(&info))
     }
 
@@ -157,14 +142,9 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the request.
-    pub fn set_capacity(&self) -> Result<(), Error> {
-        LOOP_SET_CAPACITY
-            .ioctl(self.file.as_fd())
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_SET_CAPACITY",
-                source,
-            })?;
+    /// The kernel's error is returned as-is if it rejects the request.
+    pub fn set_capacity(&self) -> io::Result<()> {
+        LOOP_SET_CAPACITY.ioctl(self.file.as_fd())?;
         Ok(())
     }
 
@@ -179,15 +159,10 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the request (e.g. the
-    /// backing file or block size doesn't support direct I/O).
-    pub fn set_direct_io(&self, enable: bool) -> Result<(), Error> {
-        LOOP_SET_DIRECT_IO
-            .ioctl(self.file.as_fd(), c_int::from(enable))
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_SET_DIRECT_IO",
-                source,
-            })?;
+    /// The kernel's error is returned as-is if it rejects the request (e.g.
+    /// the backing file or block size doesn't support direct I/O).
+    pub fn set_direct_io(&self, enable: bool) -> io::Result<()> {
+        LOOP_SET_DIRECT_IO.ioctl(self.file.as_fd(), c_int::from(enable))?;
         Ok(())
     }
 
@@ -195,19 +170,14 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects `block_size` (`EINVAL`
-    /// unless it is a power of two between 512 and the page size).
-    pub fn set_block_size(&self, block_size: u32) -> Result<(), Error> {
+    /// The kernel's error is returned as-is if it rejects `block_size`
+    /// (`EINVAL` unless it is a power of two between 512 and the page size).
+    pub fn set_block_size(&self, block_size: u32) -> io::Result<()> {
         // The kernel validates the value; a too-large block size that doesn't
         // fit in c_int simply can't be a valid one, so the wrap is harmless.
         #[allow(clippy::cast_possible_wrap)]
         let arg = block_size as c_int;
-        LOOP_SET_BLOCK_SIZE
-            .ioctl(self.file.as_fd(), arg)
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_SET_BLOCK_SIZE",
-                source,
-            })?;
+        LOOP_SET_BLOCK_SIZE.ioctl(self.file.as_fd(), arg)?;
         Ok(())
     }
 
@@ -225,14 +195,9 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the swap.
-    pub fn change_fd(&self, backing: impl AsFd) -> Result<(), Error> {
-        LOOP_CHANGE_FD
-            .ioctl(self.file.as_fd(), backing.as_fd().as_raw_fd())
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_CHANGE_FD",
-                source,
-            })?;
+    /// The kernel's error is returned as-is if it rejects the swap.
+    pub fn change_fd(&self, backing: impl AsFd) -> io::Result<()> {
+        LOOP_CHANGE_FD.ioctl(self.file.as_fd(), backing.as_fd().as_raw_fd())?;
         Ok(())
     }
 
@@ -246,9 +211,9 @@ impl LoopDevice {
     ///
     /// # Errors
     ///
-    /// [`Error::LoopIoctl`] if the kernel rejects the removal (e.g. the node
-    /// is still open elsewhere — `EBUSY`).
-    pub fn remove(self) -> Result<(), Error> {
+    /// The kernel's error is returned as-is if it rejects the removal (e.g.
+    /// `ResourceBusy` if the node is still open elsewhere — `EBUSY`).
+    pub fn remove(self) -> io::Result<()> {
         // Best-effort unbind so the node isn't busy on account of a binding.
         let _ = self.detach();
         let Self {
@@ -261,12 +226,7 @@ impl LoopDevice {
         drop(file);
         // Loop numbers are small and always fit in a positive c_int.
         #[allow(clippy::cast_possible_wrap)]
-        LOOP_CTL_REMOVE
-            .ioctl(control.as_fd(), number as c_int)
-            .map_err(|source| Error::LoopIoctl {
-                op: "LOOP_CTL_REMOVE",
-                source,
-            })?;
+        LOOP_CTL_REMOVE.ioctl(control.as_fd(), number as c_int)?;
         Ok(())
     }
 }

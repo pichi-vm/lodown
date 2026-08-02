@@ -13,7 +13,7 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use lodown::{Config, Control, Detached, Error};
+use lodown::{Config, Control, Detached};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -36,7 +36,7 @@ pub(crate) fn attach_retrying(control: &Control, backing: &File, config: &Config
     for _ in 0..100 {
         match control.attach(backing, config) {
             Ok(device) => return device,
-            Err(Error::LoopIoctl { source, .. }) if source.kind() == ErrorKind::ResourceBusy => {}
+            Err(e) if e.kind() == ErrorKind::ResourceBusy => {}
             Err(other) => panic!("attach failed: {other}"),
         }
     }

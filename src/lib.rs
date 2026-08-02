@@ -11,7 +11,7 @@
 //! use std::fs::File;
 //! use lodown::{Config, Control};
 //!
-//! # fn main() -> Result<(), lodown::Error> {
+//! # fn main() -> std::io::Result<()> {
 //! let control = Control::open()?;               // needs CAP_SYS_ADMIN
 //! let backing = File::open("/path/to/backing.img")?;
 //!
@@ -29,13 +29,11 @@
 mod config;
 mod control;
 mod device;
-mod error;
 mod uapi;
 
 pub use config::Config;
 pub use control::Control;
 pub use device::{Detach, Detached, Guard, LoopDevice, Remove, Removed, Status, Teardown};
-pub use error::Error;
 
 /// The handles are safe to share across threads; assert it at compile time
 /// so a future field addition can't silently regress it.

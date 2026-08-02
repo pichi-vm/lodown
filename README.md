@@ -21,7 +21,7 @@ through iocuddle, so the only `unsafe` in the crate is confined to one module
 use std::fs::File;
 use lodown::{Config, Control};
 
-fn main() -> Result<(), lodown::Error> {
+fn main() -> std::io::Result<()> {
     let control = Control::open()?;              // /dev/loop-control
     let backing = File::open("disk.img")?;
 
