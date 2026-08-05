@@ -6,6 +6,7 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use lodown::{Configurable, Control, Device};
 
@@ -17,12 +18,15 @@ pub(crate) const BACKING_SIZE: u64 = 4 * 1024 * 1024;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// A loop number no concurrent `get_free` will hand out.
+/// Loop numbers at or above this belong to a test that owns them outright.
+pub(crate) const SPARE_BASE: u32 = 1000;
+
+/// A loop number reserved for one test, which [`attach`] will never take.
 ///
 /// Tests run in parallel, so each takes its own `slot`; the per-process
 /// stride keeps concurrent binaries apart.
 pub(crate) fn spare(slot: u32) -> u32 {
-    1000 + (std::process::id() % 200) * 8 + slot
+    SPARE_BASE + (std::process::id() % 200) * 8 + slot
 }
 
 /// Opens `/dev/loop-control`, or `None` when unprivileged.
@@ -45,17 +49,30 @@ pub(crate) fn open_control() -> Option<Control> {
 
 /// Claims, opens, and binds a device, retrying the `get_free` race.
 ///
-/// `get_free` reserves nothing, so a concurrent claimant can leave
-/// `configure` failing with `EBUSY`; these tests contend for free devices.
+/// `get_free` reserves nothing and draws from the same pool the `spare`
+/// devices land in, so between the claim and the bind a parallel test can
+/// remove the device (`ENXIO`/`ENOENT` from the open) or bind it first
+/// (`EBUSY` from the configure). Both mean "try another number".
 pub(crate) fn attach(
     control: &Control,
     backing: &File,
     block_size: u32,
     config: Configurable,
 ) -> (Device, u32) {
-    for _ in 0..100 {
+    for _ in 0..200 {
         let number = control.get_free().expect("get_free");
-        let device = Device::open(number).expect("open device node");
+        if number >= SPARE_BASE {
+            // `get_free` hands back the lowest unbound device, which under
+            // load can be a `spare` another test owns. Leave it alone and
+            // wait for one of the shared devices to come free.
+            std::thread::sleep(Duration::from_millis(5));
+            continue;
+        }
+        let device = match Device::open(number) {
+            Ok(device) => device,
+            Err(e) if raced(&e) => continue,
+            Err(other) => panic!("open device node: {other}"),
+        };
         match device.configure(backing, block_size, config) {
             Ok(()) => return (device, number),
             Err(e) if e.kind() == ErrorKind::ResourceBusy => {}
@@ -63,6 +80,14 @@ pub(crate) fn attach(
         }
     }
     panic!("kept losing the get-free/configure race");
+}
+
+/// Did a parallel test remove this device out from under us?
+///
+/// The kernel rejects opening a device mid-teardown with `ENXIO`, and the
+/// node is gone entirely (`ENOENT`) once the removal lands.
+pub(crate) fn raced(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(ENXIO)) || error.kind() == ErrorKind::NotFound
 }
 
 /// A temporary sparse backing file, deleted on drop.

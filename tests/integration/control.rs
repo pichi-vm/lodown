@@ -38,8 +38,17 @@ fn get_free_returns_a_real_node() {
         return;
     };
 
-    let number = control.get_free().expect("get_free");
-    Device::open(number).expect("the claimed node must open");
+    // A parallel test can remove the claimed device before we open it, so
+    // retry rather than assert on a single draw.
+    for _ in 0..100 {
+        let number = control.get_free().expect("get_free");
+        match Device::open(number) {
+            Ok(_) => return,
+            Err(e) if crate::common::raced(&e) => {}
+            Err(other) => panic!("the claimed node must open: {other}"),
+        }
+    }
+    panic!("every claimed number was removed by a parallel test");
 }
 
 /// Numbers too large for `c_int` are rejected, not wrapped negative.
