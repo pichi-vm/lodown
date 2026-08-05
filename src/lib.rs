@@ -30,7 +30,14 @@
 //! # }
 //! ```
 
-#![warn(missing_docs)]
+#![deny(unsafe_code)]
+#![warn(clippy::all, clippy::pedantic)]
+#![warn(missing_debug_implementations, missing_docs, unreachable_pub)]
+#![warn(rust_2018_idioms)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::wildcard_imports)]
 
 mod control;
 mod device;
