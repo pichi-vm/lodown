@@ -151,9 +151,18 @@ mod tests {
 
     /// Binds a fresh 1 MiB backing file, or `None` without `CAP_SYS_ADMIN`.
     fn bind(tag: &str, config: Configurable) -> Option<Bound> {
-        let Ok(control) = Control::open() else {
-            eprintln!("skip: requires root (or CAP_SYS_ADMIN) for /dev/loop-control");
-            return None;
+        // `LODOWN_REQUIRE_ROOT` turns this skip into a failure, so a CI job
+        // that loses its privileges says so instead of passing vacuously.
+        let control = match Control::open() {
+            Ok(control) => control,
+            Err(error) => {
+                assert!(
+                    std::env::var_os("LODOWN_REQUIRE_ROOT").is_none(),
+                    "LODOWN_REQUIRE_ROOT is set, but /dev/loop-control could not be opened: {error}"
+                );
+                eprintln!("skip: requires root (or CAP_SYS_ADMIN) for /dev/loop-control");
+                return None;
+            }
         };
 
         let path =

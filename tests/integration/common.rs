@@ -29,12 +29,20 @@ pub(crate) fn spare(slot: u32) -> u32 {
 
 /// Returns `None` (and prints a skip notice) if this process can't open
 /// `/dev/loop-control` — i.e. isn't root / doesn't have `CAP_SYS_ADMIN`.
+/// Setting `LODOWN_REQUIRE_ROOT` turns the skip below into a failure, so a CI
+/// job that loses its privileges reports that instead of a vacuous pass.
 pub(crate) fn open_control() -> Option<Control> {
-    if let Ok(control) = Control::open() {
-        return Some(control);
+    match Control::open() {
+        Ok(control) => Some(control),
+        Err(error) => {
+            assert!(
+                std::env::var_os("LODOWN_REQUIRE_ROOT").is_none(),
+                "LODOWN_REQUIRE_ROOT is set, but /dev/loop-control could not be opened: {error}"
+            );
+            eprintln!("skip: requires root (or CAP_SYS_ADMIN) for /dev/loop-control");
+            None
+        }
     }
-    eprintln!("skip: requires root (or CAP_SYS_ADMIN) for /dev/loop-control");
-    None
 }
 
 /// `get_free` + `Device::open` + `configure`, retrying the whole sequence on

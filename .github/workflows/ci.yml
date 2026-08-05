@@ -1,0 +1,101 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: fmt, clippy, rustdoc
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: cargo doc
+        run: cargo doc --locked --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  test:
+    name: test suite
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The suite drives the real loop driver. Fail early and legibly if the
+      # runner can't offer one, rather than deep inside a test.
+      - name: check the runner has a loop driver
+        run: |
+          set -euo pipefail
+          if [ ! -e /dev/loop-control ]; then
+            echo "::error::runner has no /dev/loop-control; the loop driver is required"
+            exit 1
+          fi
+          # Runner images may already have loop devices mounted (snap, etc.),
+          # so record the baseline instead of expecting none.
+          sudo losetup -a | sort > /tmp/loop-baseline.txt
+          cat /tmp/loop-baseline.txt
+
+      # Everything that needs no privilege, including the doctests. This also
+      # proves the root-gated tests still skip cleanly for contributors who
+      # run the suite as themselves.
+      - name: cargo test (unprivileged, root-gated tests skip)
+        run: cargo test --locked
+
+      # Build as the runner so target/ stays runner-owned and rust-cache can
+      # save it, then execute only the binaries as root.
+      - name: build test binaries
+        run: cargo test --locked --no-run
+
+      # LODOWN_REQUIRE_ROOT turns the skip into a failure: without it a
+      # runner that lost its privileges would report a green, empty suite.
+      - name: cargo test (privileged, skips are fatal)
+        env:
+          LODOWN_REQUIRE_ROOT: 1
+        run: |
+          set -euo pipefail
+          mapfile -t bins < <(
+            cargo test --locked --no-run --message-format=json 2>/dev/null \
+              | jq -r 'select(.profile.test == true) | .executable | select(. != null)'
+          )
+          if [ "${#bins[@]}" -eq 0 ]; then
+            echo "::error::found no test binaries to run"
+            exit 1
+          fi
+          for bin in "${bins[@]}"; do
+            echo "::group::$(basename "$bin")"
+            sudo --preserve-env=LODOWN_REQUIRE_ROOT "$bin" --test-threads=8
+            echo "::endgroup::"
+          done
+
+      # A test that panics before its `clear()` leaves a device bound, which
+      # is invisible in the test output. Diff against the baseline to catch it.
+      - name: leave no loop devices behind
+        run: |
+          set -euo pipefail
+          sudo losetup -a | sort > /tmp/loop-after.txt
+          if ! diff -u /tmp/loop-baseline.txt /tmp/loop-after.txt; then
+            echo "::error::the suite leaked loop devices (see the diff above)"
+            exit 1
+          fi
