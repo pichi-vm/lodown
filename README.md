@@ -18,51 +18,59 @@ through iocuddle, so the only `unsafe` in the crate is confined to one module
 ## Quick start
 
 ```no_run
-use std::fs::File;
-use lodown::{Config, Control};
+use std::fs::OpenOptions;
+use lodown::{Configurable, Control, Device};
 
 fn main() -> std::io::Result<()> {
-    let control = Control::open()?;              // /dev/loop-control
-    let backing = File::open("disk.img")?;
+    let control = Control::open()?;             // /dev/loop-control
+    let backing = OpenOptions::new().read(true).write(true).open("disk.img")?;
 
-    // Allocate a free device and configure it in one step. The returned
-    // `Detached` guard detaches the backing file when dropped (leaving the
-    // pool node in place); call `LoopDevice::from(dev)` to keep the binding
-    // past this scope.
-    let dev = control.attach(&backing, &Config::new().offset(0).read_only(true))?;
+    // Claim a free number and bind the backing file to it. `get_free` does
+    // not reserve the device, so a concurrent claimant can make `configure`
+    // fail with `EBUSY`; retry from `get_free` if that matters.
+    let number = control.get_free()?;
+    let device = Device::open(number)?;
 
-    let status = dev.status()?;
+    device.configure(&backing, 0, Configurable {
+        read_only: true,
+        ..Default::default()
+    })?;
+
+    let status = device.status()?;
     println!("/dev/loop{} — offset {}, read_only {}",
-             dev.number(), status.offset(), status.is_read_only());
+             status.number, status.offset, status.read_only);
 
-    Ok(())                                        // `dev` drops -> detach
+    device.clear()?;                            // detach the backing file
+    Ok(())
 }
 ```
 
 ## The model
 
-- **`Control`** — the `/dev/loop-control` fd; a factory for devices:
-  `open`, `add`, `remove`, `get_free`, `by_number`, and the `attach`
-  convenience (`get_free` + `LOOP_CONFIGURE`). `add` returns a `Removed`
-  guard and `attach` returns a `Detached` guard; `get_free` and `by_number`
-  return a plain `LoopDevice`, since they acquire nothing this crate owns.
-- **`Guard<K>`** — an auto-cleaning guard that `Deref`s to `LoopDevice`, with
-  two aliases for its teardown strategy: **`Removed`** (from `add`) removes
-  the `/dev/loopN` node on drop, and **`Detached`** (from `attach`) detaches
-  the backing file on drop (leaving the pool node in place). Both are
-  best-effort; unwrap with `LoopDevice::from(..)` to opt out, or call
-  `LoopDevice::remove` / `LoopDevice::detach` for the same teardown with an
-  observable error.
-- **`LoopDevice`** — the leaked form of a device: a handle to an opened
-  `/dev/loopN`, with `number`, `path`, `major`, and `minor` accessors.
-  Everything else lives here: `configure`, `detach`, `remove`, `status`,
-  `set_capacity`, `set_direct_io`, `set_block_size`, `change_fd`. `configure`
-  and `change_fd` accept any `AsFd` backing (a `File`, `&File`, or borrowed
-  fd).
-- **`Config`** — a fluent builder for the settable parameters (`offset`,
-  `size_limit`, `read_only`, `autoclear`, `partscan`, `direct_io`,
-  `block_size`) applied via `LOOP_CONFIGURE`.
-- **`Status`** — a read-only view over `LOOP_GET_STATUS64`.
+- **`Control`** — the `/dev/loop-control` fd; the node factory: `add`,
+  `remove`, `get_free`. It never binds a device.
+- **`Device`** — a handle to an opened `/dev/loopN`: `configure`, `clear`,
+  `change_backing`, `status`, `set_status`, `set_capacity`, `set_direct_io`,
+  `set_block_size`. Dropping it closes the node but does *not* detach the
+  backing file — call `clear`, or set `Configurable::autoclear` and let the
+  kernel detach on last close.
+
+Device state is split into three tiers, by which ioctl can actually change
+each field. `LOOP_SET_STATUS64` masks the flags it accepts and returns
+success for the rest, so the split is what keeps a silently-ignored write
+from being expressible:
+
+- **`Writable`** — what `set_status` (`LOOP_SET_STATUS64`) can change:
+  `offset`, `size_limit`, `file_name`, `autoclear`, `partscan`.
+- **`Configurable`** — what `configure` (`LOOP_CONFIGURE`) can set: the
+  `Writable` fields plus `read_only` and `direct_io`, which are fixed for the
+  lifetime of the binding.
+- **`Readable`** — what `status` (`LOOP_GET_STATUS64`) reports: the
+  `Configurable` fields plus the kernel-owned `device`, `inode`, `rdevice`,
+  and `number`.
+
+Each tier derefs to the one below it, so `status.offset`, `status.read_only`,
+and `status.number` all work directly.
 
 ## Testing
 
