@@ -1,21 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Kernel UAPI mirrors + ioctl-number declarations. This is the ONLY module
-//! in the crate that needs `#![allow(unsafe_code)]` — every unsafe block
-//! here is an iocuddle const constructor.
+//! Mirrors of `<linux/loop.h>`; the safe views live in [`super::info`].
 //!
-//! [`LoopInfo`] mirrors `struct loop_info64` and [`LoopConfig`] mirrors
-//! `struct loop_config`; the safe views over them live in [`super::info`].
-//! All field layouts and command numbers below mirror `<linux/loop.h>`.
+//! The only module needing `allow(unsafe_code)`: every unsafe block is an
+//! iocuddle const constructor.
 //!
-//! Unlike device-mapper's `_IOWR(0xfd, N, struct)` ioctls, the loop ioctl
-//! request numbers are bare `_IO(0x4C, n)` constants with no size field
-//! baked in, so they can't be built with iocuddle's `Group::write_read`
-//! (which would encode a struct size and produce the wrong request number).
-//! Every one is therefore declared with [`Ioctl::classic`] against the exact
-//! literal request number: struct-pointer ioctls as `Write<&T>`/`WriteRead<&T>`,
-//! scalar-argument ioctls as `Write<c_int>` (the arg passed by value), and
-//! no-argument ioctls as `Write<c_void>`.
+//! The loop request numbers are bare `_IO(0x4C, n)` with no size field, so
+//! iocuddle's `Group::*` builders would encode a struct size and produce the
+//! wrong number. Each is declared with [`Ioctl::classic`] against the literal
+//! instead: struct-pointer ioctls as `Write<&T>`/`WriteRead<&T>`, by-value
+//! ioctls as `Write<c_int>`, and no-argument ioctls as `Write<c_void>`.
 
 #![allow(unreachable_pub)]
 #![allow(unsafe_code)]
@@ -28,27 +22,20 @@ use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 pub const LO_NAME_SIZE: usize = 64;
 pub const LO_KEY_SIZE: usize = 32;
 
-/// `LOOP_MAJOR` — the block-device major number the loop driver owns. Fixed
-/// at 7 in Linux; a `/dev/loopN` node is `(7, N)`.
+/// The block-device major the loop driver owns.
 #[allow(dead_code)]
 pub const LOOP_MAJOR: u32 = 7;
 
-/// `LO_FLAGS_READ_ONLY` — the loop device is read-only. Settable only by
-/// `LOOP_CONFIGURE` (it is absent from `LOOP_SET_STATUS_SETTABLE_FLAGS`).
+/// Read-only device; `LOOP_CONFIGURE` only.
 pub const LO_FLAGS_READ_ONLY: u32 = 1;
 
-/// `LO_FLAGS_AUTOCLEAR` — the device auto-detaches when its last user
-/// closes it. The only flag `LOOP_SET_STATUS64` can also *clear*.
+/// Detach on last close; the only flag `LOOP_SET_STATUS64` can clear.
 pub const LO_FLAGS_AUTOCLEAR: u32 = 4;
 
-/// `LO_FLAGS_PARTSCAN` — the kernel scans the backing file for a partition
-/// table and creates partition devices. `LOOP_SET_STATUS64` can set it but
-/// not clear it.
+/// Scan for partitions; `LOOP_SET_STATUS64` can set but not clear it.
 pub const LO_FLAGS_PARTSCAN: u32 = 8;
 
-/// `LO_FLAGS_DIRECT_IO` — I/O to the backing file bypasses the page cache.
-/// Settable by `LOOP_CONFIGURE` or the dedicated `LOOP_SET_DIRECT_IO`;
-/// `LOOP_SET_STATUS64` silently masks it off.
+/// Bypass the page cache; `LOOP_SET_STATUS64` silently masks it off.
 pub const LO_FLAGS_DIRECT_IO: u32 = 16;
 
 // SAFETY: `LOOP_CONFIGURE = 0x4C0A` is `_IO(0x4C, 0x0A)` per
@@ -82,28 +69,28 @@ pub const LOOP_GET_STATUS64: Ioctl<WriteRead, &LoopInfo> = unsafe { Ioctl::class
 // fd, a size, a boolean, or a loop number) — never as a pointer — matching
 // the `c_int`/`c_void` argument type.
 
-/// `LOOP_CLR_FD` — detach the backing file (no argument).
+/// Detach the backing file.
 pub const LOOP_CLR_FD: Ioctl<Write, c_void> = unsafe { Ioctl::classic(0x4C01) };
 
-/// `LOOP_CHANGE_FD` — swap the backing file (arg = new raw fd).
+/// Swap the backing file; arg is the new fd.
 pub const LOOP_CHANGE_FD: Ioctl<Write, c_int> = unsafe { Ioctl::classic(0x4C06) };
 
-/// `LOOP_SET_CAPACITY` — re-read the backing file's size (no argument).
+/// Re-read the backing file's size.
 pub const LOOP_SET_CAPACITY: Ioctl<Write, c_void> = unsafe { Ioctl::classic(0x4C07) };
 
-/// `LOOP_SET_DIRECT_IO` — toggle direct I/O (arg = 0/1).
+/// Toggle direct I/O; arg is 0 or 1.
 pub const LOOP_SET_DIRECT_IO: Ioctl<Write, c_int> = unsafe { Ioctl::classic(0x4C08) };
 
-/// `LOOP_SET_BLOCK_SIZE` — set the logical block size (arg = block size).
+/// Set the logical block size; arg is the size.
 pub const LOOP_SET_BLOCK_SIZE: Ioctl<Write, c_int> = unsafe { Ioctl::classic(0x4C09) };
 
-/// `LOOP_CTL_ADD` — create `/dev/loopN` (arg = desired number; returns it).
+/// Create `/dev/loopN`; arg is the number, which is also returned.
 pub const LOOP_CTL_ADD: Ioctl<Write, c_int> = unsafe { Ioctl::classic(0x4C80) };
 
-/// `LOOP_CTL_REMOVE` — remove `/dev/loopN` (arg = number).
+/// Remove `/dev/loopN`; arg is the number.
 pub const LOOP_CTL_REMOVE: Ioctl<Write, c_int> = unsafe { Ioctl::classic(0x4C81) };
 
-/// `LOOP_CTL_GET_FREE` — allocate/return a free loop number (no argument).
+/// Return a free loop number, adding a device if needed.
 pub const LOOP_CTL_GET_FREE: Ioctl<Write, c_void> = unsafe { Ioctl::classic(0x4C82) };
 
 // `#[repr(C)]` mirror of `struct loop_config` from `<linux/loop.h>`

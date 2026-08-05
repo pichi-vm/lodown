@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! The loop-device state, split into three tiers by which ioctl can touch
-//! each field: [`Writable`] (`LOOP_SET_STATUS64`) ⊂ [`Configurable`]
-//! (`LOOP_CONFIGURE`) ⊂ [`Readable`] (`LOOP_GET_STATUS64`).
+//! Device state, split by which ioctl can touch each field.
 //!
-//! The split is not cosmetic. `LOOP_SET_STATUS64` masks the flags it accepts
-//! (`LOOP_SET_STATUS_SETTABLE_FLAGS`) and reports success for the rest, so
-//! asking it for `read_only` or `direct_io` silently does nothing. Keeping
-//! those two fields off [`Writable`] makes that unrepresentable rather than
-//! undetectable.
+//! [`Writable`] ⊂ [`Configurable`] ⊂ [`Readable`]. `LOOP_SET_STATUS64`
+//! discards the flags it does not accept and still reports success, so
+//! `read_only` and `direct_io` are absent from [`Writable`] to keep a
+//! silently ignored write from being expressible.
 
 use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
@@ -20,86 +17,72 @@ use crate::uapi::{
     LO_FLAGS_AUTOCLEAR, LO_FLAGS_DIRECT_IO, LO_FLAGS_PARTSCAN, LO_FLAGS_READ_ONLY, LoopInfo,
 };
 
-/// The state [`Device::set_status`](crate::Device::set_status)
-/// (`LOOP_SET_STATUS64`) can change on an already-bound device.
+/// What [`Device::set_status`](crate::Device::set_status) can change.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Writable {
-    /// Byte offset into the backing file at which the device starts.
+    /// Where the device starts within the backing file.
     pub offset: u64,
 
-    /// Device size in bytes; `None` uses the whole backing file from
-    /// [`offset`](Self::offset) onward.
+    /// Device size; `None` runs to the end of the backing file.
     pub size_limit: Option<NonZero<u64>>,
 
-    /// The backing-file name the kernel records and reports back.
-    ///
-    /// Purely informational — the kernel stores it verbatim and never
-    /// resolves it. [`Device::change_backing`](crate::Device::change_backing)
-    /// does not update it.
+    /// A label the kernel stores verbatim and never resolves.
     pub file_name: Name,
 
-    /// Detach the backing file when the device's last user closes it
-    /// (`LO_FLAGS_AUTOCLEAR`).
+    /// Detach on last close (`LO_FLAGS_AUTOCLEAR`).
     pub autoclear: bool,
 
-    /// Scan the backing file for a partition table and create partition
-    /// devices (`LO_FLAGS_PARTSCAN`).
+    /// Scan the backing file for partitions (`LO_FLAGS_PARTSCAN`).
     ///
-    /// `LOOP_SET_STATUS64` can only turn this *on*. Setting it back to
-    /// `false` there is silently ignored; clearing it takes a fresh
+    /// [`Device::set_status`](crate::Device::set_status) can only turn this
+    /// on; clearing it takes a fresh
     /// [`configure`](crate::Device::configure).
     pub partscan: bool,
 }
 
-/// The state [`Device::configure`](crate::Device::configure)
-/// (`LOOP_CONFIGURE`) can set: every [`Writable`] field, plus the two flags
-/// that are fixed for the lifetime of the binding.
+/// What [`Device::configure`](crate::Device::configure) can set.
 ///
-/// Derefs to [`Writable`], so its fields are reachable directly.
+/// [`Writable`] plus the two flags fixed for the life of the binding.
+/// Derefs to [`Writable`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Configurable {
-    /// The subset `LOOP_SET_STATUS64` can also change later.
+    /// The fields that stay changeable after binding.
     pub writable: Writable,
 
-    /// Refuse writes to the device (`LO_FLAGS_READ_ONLY`).
+    /// Refuse writes (`LO_FLAGS_READ_ONLY`).
     ///
-    /// This can only *add* the restriction. A device is writable only if both
-    /// the backing file and the `/dev/loopN` node were opened read-write, so
-    /// an `O_RDONLY` backing file yields a read-only device whatever this is
-    /// set to. Once configured, the flag cannot be changed.
+    /// Only ever adds the restriction, and cannot be lifted afterwards: an
+    /// `O_RDONLY` backing file or node yields a read-only device regardless.
     pub read_only: bool,
 
-    /// Bypass the page cache for backing-file I/O (`LO_FLAGS_DIRECT_IO`).
+    /// Bypass the page cache (`LO_FLAGS_DIRECT_IO`).
     ///
-    /// The kernel silently clears this if the backing filesystem or the
-    /// offset/block-size alignment can't support it, so check
-    /// [`Readable`] afterwards — or use
+    /// Silently cleared when the filesystem or the offset/block-size
+    /// alignment cannot support it, so read it back — or set it with
     /// [`Device::set_direct_io`](crate::Device::set_direct_io), which fails
-    /// loudly instead.
+    /// loudly.
     pub direct_io: bool,
 }
 
-/// Everything [`Device::status`](crate::Device::status)
-/// (`LOOP_GET_STATUS64`) reports: every [`Configurable`] field, plus the
-/// identifiers the kernel owns.
+/// What [`Device::status`](crate::Device::status) reports.
 ///
-/// Derefs to [`Configurable`] (and so to [`Writable`]), so all of it is
-/// reachable directly — `status.offset`, `status.read_only`, `status.number`.
+/// [`Configurable`] plus the identifiers the kernel owns. Derefs to
+/// [`Configurable`], so every field is reachable directly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Readable {
-    /// The subset `LOOP_CONFIGURE` can set.
+    /// The fields a caller can set.
     pub configurable: Configurable,
 
-    /// `st_dev` of the backing file.
+    /// The backing file's `st_dev`.
     pub device: u64,
 
-    /// `st_ino` of the backing file.
+    /// The backing file's `st_ino`.
     pub inode: u64,
 
-    /// `st_rdev` of the backing file.
+    /// The backing file's `st_rdev`.
     pub rdevice: u64,
 
-    /// This device's loop number `N`, as in `/dev/loopN`.
+    /// The `N` in `/dev/loopN`.
     pub number: u32,
 }
 
@@ -233,8 +216,7 @@ mod tests {
         }
     }
 
-    /// `LOOP_SET_STATUS64` only honours `AUTOCLEAR` and `PARTSCAN`, so a
-    /// `Writable` must never contribute any other flag bit.
+    /// `Writable` must emit no flag beyond `AUTOCLEAR` and `PARTSCAN`.
     #[test]
     fn writable_emits_only_the_set_status_flags() {
         let info = LoopInfo::from(writable());
@@ -259,8 +241,7 @@ mod tests {
         );
     }
 
-    /// The kernel spells "no limit" as a zero `lo_sizelimit`, which must map
-    /// to `None` and back.
+    /// "No limit" is a zero `lo_sizelimit`, mapping to `None` and back.
     #[test]
     fn absent_size_limit_round_trips_through_zero() {
         assert_eq!(LoopInfo::from(Writable::default()).sizelimit, 0);

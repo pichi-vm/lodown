@@ -2,10 +2,9 @@
 
 //! What `LOOP_SET_STATUS64` actually honours.
 //!
-//! The ioctl reports success no matter what you hand it, then applies only
-//! the fields in its settable/clearable masks. These tests pin down which
-//! ones those are — the behaviour the `Writable` / `Configurable` split
-//! exists to encode. Root-gated; every test skips cleanly without privilege.
+//! It reports success whatever it is handed, then applies only the fields in
+//! its settable and clearable masks. These pin down which ones those are —
+//! the behaviour the `Writable` / `Configurable` split encodes.
 
 use std::num::NonZero;
 
@@ -39,8 +38,7 @@ fn honours_offset_size_limit_and_file_name() {
     device.clear().expect("detach");
 }
 
-/// `autoclear` is the only flag in `LOOP_SET_STATUS_CLEARABLE_FLAGS`, so it
-/// is the only one this ioctl can turn back off.
+/// `autoclear` is the only flag this ioctl can turn back off.
 #[test]
 fn sets_and_clears_autoclear() {
     let Some(control) = open_control() else {
@@ -62,8 +60,7 @@ fn sets_and_clears_autoclear() {
     device.clear().expect("detach");
 }
 
-/// `partscan` is in the settable mask but not the clearable one, so asking
-/// to turn it off returns success and does nothing.
+/// `partscan` is settable but not clearable, so clearing is a silent no-op.
 #[test]
 fn sets_but_cannot_clear_partscan() {
     let Some(control) = open_control() else {
@@ -88,9 +85,7 @@ fn sets_but_cannot_clear_partscan() {
     device.clear().expect("detach");
 }
 
-/// `read_only` and `direct_io` are absent from `Writable` precisely because
-/// this ioctl masks them off, so a full status round trip must leave them
-/// exactly as `configure` set them.
+/// A status round trip must leave the configure-only flags untouched.
 #[test]
 fn leaves_the_configure_only_flags_alone() {
     let Some(control) = open_control() else {

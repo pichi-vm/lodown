@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`Name`]: the kernel's fixed 64-byte backing-file name field.
+//! The fixed-size backing-file name field.
 
 use std::ops::{Deref, DerefMut};
 
 use crate::uapi::LO_NAME_SIZE;
 
-/// The kernel's fixed 64-byte backing-file name field (`lo_file_name`).
+/// A NUL-padded `lo_file_name`, dereferencing to its bytes.
 ///
-/// This wrapper exists so the status types can derive [`Default`]: std
-/// implements `Default` for arrays only up to 32 elements, and `LO_NAME_SIZE`
-/// is 64. It [`Deref`]s to the raw byte array, so treat it as one — the
-/// kernel stores the name verbatim, NUL-padded, and always NUL-terminates
-/// what it reports back.
+/// The wrapper exists only so the status types can derive [`Default`], which
+/// std does not implement for arrays this long.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Name([u8; LO_NAME_SIZE]);
 

@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `/dev/loop-control`: creating, removing, and claiming loop numbers.
-//! Root-gated — every test skips cleanly without privilege.
+//! Creating, removing, and claiming loop numbers.
 
 use std::io::ErrorKind;
 
 use lodown::Device;
 
-/// Regression test: `add` must issue `LOOP_CTL_ADD` (0x4C80).
+/// Regression test: `add` must issue `LOOP_CTL_ADD`, not `LOOP_SET_FD`.
 ///
-/// Sending `LOOP_SET_FD` (0x4C00) to the control node instead fails with
-/// `ENOSYS` and creates nothing, so this asserts the node genuinely appears
-/// and can be opened, not merely that the ioctl returned.
+/// The wrong request number fails with `ENOSYS` and creates nothing, so this
+/// checks the node really appears rather than that the ioctl merely returned.
 #[test]
 fn add_creates_a_usable_node_and_remove_destroys_it() {
     let Some(control) = crate::common::open_control() else {
@@ -44,8 +42,7 @@ fn get_free_returns_a_real_node() {
     Device::open(number).expect("the claimed node must open");
 }
 
-/// Loop numbers cross the ioctl boundary as `c_int`, so anything that can't
-/// fit is rejected here rather than being wrapped into a negative request.
+/// Numbers too large for `c_int` are rejected, not wrapped negative.
 #[test]
 fn numbers_too_large_for_c_int_are_rejected() {
     let Some(control) = crate::common::open_control() else {

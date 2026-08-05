@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared helpers for the real-kernel integration tests: a root-gated
-//! `Control::open()` skip check, an attach helper that retries the
-//! `get_free`/`configure` race, and a temporary sparse backing file.
+//! Shared helpers for the integration tests.
 
 use std::fs::File;
 use std::io::ErrorKind;
@@ -11,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use lodown::{Configurable, Control, Device};
 
-/// `ENXIO` — what every loop ioctl reports for an unbound device.
+/// What every loop ioctl reports for an unbound device.
 pub(crate) const ENXIO: i32 = 6;
 
 /// A backing-file size big enough for an offset plus a size limit.
@@ -19,18 +17,18 @@ pub(crate) const BACKING_SIZE: u64 = 4 * 1024 * 1024;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// A loop number unlikely to collide with the host's own devices, for tests
-/// that need a device no concurrent `get_free` can claim. Tests within a
-/// binary run in parallel, so each takes its own `slot`; the per-process
-/// stride keeps concurrent test binaries apart.
+/// A loop number no concurrent `get_free` will hand out.
+///
+/// Tests run in parallel, so each takes its own `slot`; the per-process
+/// stride keeps concurrent binaries apart.
 pub(crate) fn spare(slot: u32) -> u32 {
     1000 + (std::process::id() % 200) * 8 + slot
 }
 
-/// Returns `None` (and prints a skip notice) if this process can't open
-/// `/dev/loop-control` — i.e. isn't root / doesn't have `CAP_SYS_ADMIN`.
-/// Setting `LODOWN_REQUIRE_ROOT` turns the skip below into a failure, so a CI
-/// job that loses its privileges reports that instead of a vacuous pass.
+/// Opens `/dev/loop-control`, or `None` when unprivileged.
+///
+/// `LODOWN_REQUIRE_ROOT` turns the skip into a failure, so a CI job that
+/// loses its privileges reports that instead of passing vacuously.
 pub(crate) fn open_control() -> Option<Control> {
     match Control::open() {
         Ok(control) => Some(control),
@@ -45,11 +43,10 @@ pub(crate) fn open_control() -> Option<Control> {
     }
 }
 
-/// `get_free` + `Device::open` + `configure`, retrying the whole sequence on
-/// the race `get_free` documents: it doesn't reserve the number, so a
-/// concurrent claimant can leave `configure` failing with `EBUSY`. These
-/// tests run in parallel and contend for free devices, so without this they
-/// flake against each other.
+/// Claims, opens, and binds a device, retrying the `get_free` race.
+///
+/// `get_free` reserves nothing, so a concurrent claimant can leave
+/// `configure` failing with `EBUSY`; these tests contend for free devices.
 pub(crate) fn attach(
     control: &Control,
     backing: &File,
@@ -68,8 +65,7 @@ pub(crate) fn attach(
     panic!("kept losing the get-free/configure race");
 }
 
-/// A temporary sparse file usable as loop-device backing. Deletes itself on
-/// drop (best-effort).
+/// A temporary sparse backing file, deleted on drop.
 pub(crate) struct BackingFile {
     pub(crate) file: File,
     path: PathBuf,
@@ -92,8 +88,7 @@ impl BackingFile {
         Self { file, path }
     }
 
-    /// The backing file's inode, which the kernel reports back as
-    /// `Readable::inode`.
+    /// The inode the kernel reports back.
     pub(crate) fn inode(&self) -> u64 {
         use std::os::unix::fs::MetadataExt;
         self.file.metadata().expect("stat backing file").ino()

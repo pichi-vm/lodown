@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! [`Device`]: a handle to an opened `/dev/loopN`.
+//! The `/dev/loopN` handle.
 
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Result};
@@ -12,36 +12,29 @@ use zerocopy::FromZeros;
 use crate::info::{Configurable, Readable, Writable};
 use crate::uapi::*;
 
-/// A handle to an opened `/dev/loopN` node.
+/// An opened `/dev/loopN` node.
 ///
-/// Dropping a `Device` closes the node; it does *not* detach the backing
-/// file. Call [`clear`](Self::clear) to detach, or set
-/// [`Writable::autoclear`] so the kernel detaches on last close.
+/// Dropping this closes the node but leaves any backing file attached; use
+/// [`clear`](Self::clear) or [`Writable::autoclear`] to detach.
 #[derive(Debug)]
 pub struct Device(File);
 
 impl Device {
-    /// Opens `/dev/loop{number}`, which must already exist (see
-    /// [`Control::add`](crate::Control::add) and
-    /// [`Control::get_free`](crate::Control::get_free)).
+    /// Opens an existing `/dev/loop{number}` read-write.
     ///
-    /// The node is opened read-write. `LOOP_CONFIGURE` forces
-    /// `LO_FLAGS_READ_ONLY` on a device whose node was opened read-only, so a
-    /// read-write open is the only way [`configure`](Self::configure) can
-    /// produce a writable device; ask for a read-only one with
-    /// [`Configurable::read_only`] instead.
+    /// `LOOP_CONFIGURE` forces `LO_FLAGS_READ_ONLY` when the node was opened
+    /// read-only, so read-write is the only mode that can yield a writable
+    /// device; request a read-only one with [`Configurable::read_only`].
     pub fn open(number: c_uint) -> Result<Self> {
         let path = format!("/dev/loop{number}");
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         Ok(Device(file))
     }
 
-    /// `LOOP_CONFIGURE` — bind `backing` to this device and apply `config` in
-    /// a single ioctl. A `block_size` of zero keeps the kernel's default.
+    /// Binds `backing` and applies `config` in one ioctl (`LOOP_CONFIGURE`).
     ///
-    /// The device is writable only if `backing` was opened read-write; an
-    /// `O_RDONLY` backing file yields a read-only device regardless of
-    /// [`Configurable::read_only`].
+    /// A `block_size` of zero keeps the kernel default. An `O_RDONLY`
+    /// `backing` yields a read-only device whatever `config` asks for.
     pub fn configure(
         &self,
         backing: impl AsFd,
@@ -54,60 +47,54 @@ impl Device {
         Ok(())
     }
 
-    /// `LOOP_CLR_FD` — detach the backing file, consuming this handle.
+    /// Detaches the backing file, consuming the handle (`LOOP_CLR_FD`).
     pub fn clear(self) -> Result<()> {
         LOOP_CLR_FD.ioctl(&self.0)?;
         Ok(())
     }
 
-    /// `LOOP_CHANGE_FD` — swap in a new backing file.
+    /// Swaps in a new backing file (`LOOP_CHANGE_FD`).
     ///
-    /// Only valid for a read-only device backed by a file of the same size.
-    /// The kernel does not update the recorded
-    /// [`file_name`](Writable::file_name).
+    /// Valid only on a read-only device backed by a file of the same size.
+    /// [`Writable::file_name`] keeps naming the old file.
     pub fn change_backing(&self, backing: impl AsFd) -> Result<()> {
         LOOP_CHANGE_FD.ioctl(&self.0, backing.as_fd().as_raw_fd())?;
         Ok(())
     }
 
-    /// `LOOP_SET_CAPACITY` — re-read the backing file's current size.
+    /// Re-reads the backing file's size (`LOOP_SET_CAPACITY`).
     pub fn set_capacity(&self) -> Result<()> {
         LOOP_SET_CAPACITY.ioctl(&self.0)?;
         Ok(())
     }
 
-    /// `LOOP_SET_DIRECT_IO` — enable or disable page-cache-bypassing I/O.
+    /// Toggles direct I/O (`LOOP_SET_DIRECT_IO`).
     ///
-    /// Unlike [`configure`](Self::configure), which silently clears
-    /// [`Configurable::direct_io`] when it can't be honoured, this reports
-    /// the failure.
+    /// Reports failure, where [`configure`](Self::configure) would silently
+    /// clear [`Configurable::direct_io`] instead.
     pub fn set_direct_io(&self, enable: bool) -> Result<()> {
         LOOP_SET_DIRECT_IO.ioctl(&self.0, c_int::from(enable))?;
         Ok(())
     }
 
-    /// `LOOP_SET_BLOCK_SIZE` — set the logical block size in bytes, which
-    /// must be a power of two between 512 and the page size.
+    /// Sets the logical block size (`LOOP_SET_BLOCK_SIZE`).
     pub fn set_block_size(&self, block_size: c_uint) -> Result<()> {
         let n = c_int::try_from(block_size).map_err(|_| ErrorKind::InvalidInput)?;
         LOOP_SET_BLOCK_SIZE.ioctl(&self.0, n)?;
         Ok(())
     }
 
-    /// `LOOP_GET_STATUS64` — read this device's current state.
-    ///
-    /// Fails with `ENXIO` if no backing file is bound.
+    /// Reads the current state (`LOOP_GET_STATUS64`).
     pub fn status(&self) -> Result<Readable> {
         let mut info = LoopInfo::new_zeroed();
         LOOP_GET_STATUS64.ioctl(&self.0, &mut info)?;
         Ok(info.into())
     }
 
-    /// `LOOP_SET_STATUS64` — change the [`Writable`] state of a bound device.
+    /// Changes the [`Writable`] state of a bound device (`LOOP_SET_STATUS64`).
     ///
-    /// The kernel masks this to the fields it accepts and reports success
-    /// regardless, so [`Writable::partscan`] can only be turned on here. The
-    /// two [`Configurable`]-only flags aren't expressible by construction.
+    /// The kernel applies only the fields it accepts and reports success
+    /// either way, so [`Writable::partscan`] can only be turned on here.
     pub fn set_status(&self, status: impl Into<Writable>) -> Result<()> {
         let info = LoopInfo::from(status.into());
         LOOP_SET_STATUS64.ioctl(&self.0, &info)?;
@@ -122,10 +109,10 @@ mod tests {
     use super::*;
     use crate::Control;
 
-    /// `/dev/loop1048575` — the highest legal loop number
-    /// (`MINORMASK >> LOOP_PART_SHIFT`) and exactly 16 bytes, the length at
-    /// which a fixed 16-byte path buffer leaves no room for a NUL. Building
-    /// the path must not panic on it, whether or not the node exists.
+    /// Building the node path must not panic on the highest legal number.
+    ///
+    /// `/dev/loop1048575` is exactly 16 bytes, the length at which a fixed
+    /// 16-byte buffer leaves no room for a NUL.
     #[test]
     fn open_of_an_absent_high_number_errors_rather_than_panicking() {
         assert!(Device::open(1_048_575).is_err());
@@ -134,9 +121,8 @@ mod tests {
 
     /// A bound loop device and its backing file, detached on drop.
     ///
-    /// The integration suite has a nicer version of this, but these cases
-    /// have to reach past the public API to the raw ioctl, and `tests/` can't
-    /// see [`crate::uapi`].
+    /// Duplicated from the integration suite because these cases reach past
+    /// the public API to the raw ioctl, which `tests/` cannot see.
     struct Bound {
         device: Device,
         path: PathBuf,
@@ -187,12 +173,10 @@ mod tests {
         panic!("kept losing the get-free/configure race");
     }
 
-    /// The reason `read_only` and `direct_io` live on [`Configurable`] rather
-    /// than [`Writable`]: `LOOP_SET_STATUS64` masks both off and still reports
-    /// success, so exposing them on the `set_status` input would be a lie.
+    /// Why `read_only` and `direct_io` are absent from [`Writable`].
     ///
-    /// This can't be written against the public API — the split makes the
-    /// input unrepresentable — so it drives the ioctl with raw flags instead.
+    /// `LOOP_SET_STATUS64` masks both off and still reports success. The
+    /// public API cannot express that, so drive the ioctl with raw flags.
     #[test]
     fn set_status_silently_ignores_attempts_to_set_configure_only_flags() {
         let Some(bound) = bind("set-ro", Configurable::default()) else {
@@ -217,8 +201,7 @@ mod tests {
         );
     }
 
-    /// The same in the other direction: a configure-time `read_only` can't be
-    /// taken back off with `LOOP_SET_STATUS64` either.
+    /// The same in reverse: a configured `read_only` cannot be cleared.
     #[test]
     fn set_status_silently_ignores_attempts_to_clear_read_only() {
         let config = Configurable {

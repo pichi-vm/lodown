@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! `/dev/loopN`: binding a backing file and the operations on a bound
-//! device. Root-gated — every test skips cleanly without privilege.
+//! Binding a backing file, and the operations on a bound device.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write as _};
@@ -17,9 +16,8 @@ const SIZE_LIMIT: u64 = 1024 * 1024;
 
 /// Regression test: the device node must be opened read-write.
 ///
-/// `loop_configure` silently ORs in `LO_FLAGS_READ_ONLY` when the node was
-/// opened `O_RDONLY`, so a read-only `Device::open` yields a read-only device
-/// despite a read-write backing file — with no error to notice it by.
+/// `loop_configure` silently ORs in `LO_FLAGS_READ_ONLY` for an `O_RDONLY`
+/// node, yielding a read-only device with no error to notice it by.
 #[test]
 fn configure_defaults_leave_a_writable_device() {
     let Some(control) = open_control() else {
@@ -77,8 +75,7 @@ fn configure_round_trips_every_field() {
     device.clear().expect("detach");
 }
 
-/// The `read_only` flag has to mean something: the block device must actually
-/// reject writes, not merely report the bit.
+/// The block device must reject writes, not merely report the flag.
 #[test]
 fn read_only_device_rejects_writes() {
     let Some(control) = open_control() else {
@@ -108,11 +105,10 @@ fn read_only_device_rejects_writes() {
 
 /// Has the kernel torn our binding down yet?
 ///
-/// Mid-teardown the device sits in `Lo_rundown`, which `lo_open` itself
-/// rejects with `ENXIO` — so a failed *open* means "not settled yet", not
-/// "detached". Once it settles, the node opens again and `status` reports
-/// `ENXIO` instead. A different inode means the device was detached and then
-/// reclaimed by a concurrent test, which equally proves our binding is gone.
+/// Mid-teardown the device sits in `Lo_rundown`, which `lo_open` rejects with
+/// `ENXIO`, so a failed *open* means "not settled yet" rather than
+/// "detached". A different inode means a concurrent test reclaimed it, which
+/// equally proves our binding is gone.
 fn binding_is_gone(number: u32, our_inode: u64) -> bool {
     match Device::open(number) {
         Err(e) if e.raw_os_error() == Some(ENXIO) => false,
