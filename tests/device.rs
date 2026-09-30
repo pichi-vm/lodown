@@ -8,10 +8,10 @@ mod common;
 
 use std::ffi::CStr;
 use std::fs::OpenOptions;
-use std::io::{ErrorKind, Write as _};
+use std::io::{ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::num::NonZero;
 
-use lodown::{Configurable, Name, Writable};
+use lodown::{Configurable, Device, Name, Writable};
 
 use backing::{BACKING_SIZE, BackingFile};
 use common::open_control;
@@ -208,4 +208,73 @@ fn set_capacity_and_block_size_are_accepted() {
     );
 
     device.clear().expect("detach");
+}
+
+/// Reads and writes on a `Device` reach the backing file's bytes.
+///
+/// The whole point of a loop device, so the [`Read`]/[`Write`]/[`Seek`]
+/// impls must go through the block layer rather than anywhere else.
+///
+/// Note `Write::flush` is a no-op for a file-backed handle: it pushes no
+/// further than the page cache, and only `sync_data`/`sync_all` (or a
+/// detach) writes through to the backing file. Those live on [`File`],
+/// reached through `AsRef<File>`.
+#[test]
+fn device_reads_and_writes_the_backing_files_bytes() {
+    let Some(control) = open_control() else {
+        return;
+    };
+
+    let backing = BackingFile::create("blockio");
+    let mut device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
+
+    let pattern = [0xAB_u8; 512];
+    device
+        .write_all(&pattern)
+        .expect("write via the loop device");
+    device
+        .as_ref()
+        .sync_all()
+        .expect("sync through to the backing file");
+
+    device.rewind().expect("rewind");
+    let mut read_back = [0_u8; 512];
+    device.read_exact(&mut read_back).expect("read back");
+    assert_eq!(
+        read_back, pattern,
+        "the loop device must return what we wrote"
+    );
+
+    let mut shared: &Device = &device;
+    shared.seek(SeekFrom::Start(0)).expect("seek via &Device");
+    let mut via_shared = [0_u8; 4];
+    shared
+        .read_exact(&mut via_shared)
+        .expect("read via &Device");
+    assert_eq!(via_shared, [0xAB; 4]);
+
+    shared.rewind().expect("rewind via &Device");
+    shared.write_all(&[0xCD; 4]).expect("write via &Device");
+    shared.flush().expect("flush via &Device");
+    device.flush().expect("flush is a no-op but must not fail");
+    device.rewind().expect("rewind");
+    let mut after = [0_u8; 4];
+    device.read_exact(&mut after).expect("read back");
+    assert_eq!(after, [0xCD; 4]);
+
+    device.rewind().expect("rewind");
+    device.write_all(&pattern).expect("rewrite the pattern");
+    device.as_ref().sync_all().expect("sync");
+
+    device.clear().expect("detach");
+
+    let mut check = std::fs::File::open(backing.path()).expect("reopen backing file");
+    let mut from_file = [0_u8; 512];
+    check.read_exact(&mut from_file).expect("read backing file");
+    assert_eq!(
+        from_file, pattern,
+        "writes through the loop device must land in the backing file"
+    );
 }

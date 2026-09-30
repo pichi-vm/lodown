@@ -37,6 +37,11 @@ impl BackingFile {
         Self { file, path }
     }
 
+    /// The path, for reopening the file independently of `file`.
+    pub(crate) fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
     /// The inode the kernel reports back.
     pub(crate) fn inode(&self) -> u64 {
         use std::os::unix::fs::MetadataExt;

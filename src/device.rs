@@ -3,7 +3,7 @@
 //! The `/dev/loopN` handle.
 
 use std::fs::{File, OpenOptions};
-use std::io::{ErrorKind, Result};
+use std::io::{ErrorKind, Read, Result, Seek, SeekFrom, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::raw::{c_int, c_uint};
 
@@ -165,6 +165,56 @@ impl From<Device> for OwnedFd {
 impl From<OwnedFd> for Device {
     fn from(fd: OwnedFd) -> Self {
         Device(File::from(fd))
+    }
+}
+
+// Implemented for `&Device` as well as `Device`, mirroring `File`, so a
+// shared handle can still do I/O. Both share one kernel file offset.
+
+impl Read for Device {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+/// [`flush`](Write::flush) does nothing, as on any [`File`]: it reaches the
+/// page cache and no further. Call [`sync_all`](File::sync_all), or detach,
+/// when the backing file must see the write.
+impl Write for Device {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        self.0.flush()
+    }
+}
+
+impl Seek for Device {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
+        self.0.seek(pos)
+    }
+}
+
+impl Read for &Device {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        (&self.0).read(buf)
+    }
+}
+
+impl Write for &Device {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        (&self.0).write(buf)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (&self.0).flush()
+    }
+}
+
+impl Seek for &Device {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
+        (&self.0).seek(pos)
     }
 }
 
