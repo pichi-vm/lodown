@@ -2,6 +2,10 @@
 
 //! Binding a backing file, and the operations on a bound device.
 
+#[path = "common/backing.rs"]
+mod backing;
+mod common;
+
 use std::ffi::CStr;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write as _};
@@ -9,7 +13,8 @@ use std::num::NonZero;
 
 use lodown::{Configurable, Name, Writable};
 
-use crate::common::{BACKING_SIZE, BackingFile, open_control};
+use backing::{BACKING_SIZE, BackingFile};
+use common::open_control;
 
 const OFFSET: u64 = 64 * 1024;
 const SIZE_LIMIT: u64 = 1024 * 1024;

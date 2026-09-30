@@ -6,12 +6,17 @@
 //! its settable and clearable masks. These pin down which ones those are —
 //! the behaviour the `Writable` / `Configurable` split encodes.
 
+#[path = "common/backing.rs"]
+mod backing;
+mod common;
+
 use std::ffi::CStr;
 use std::num::NonZero;
 
 use lodown::{Configurable, Name, Writable};
 
-use crate::common::{BackingFile, open_control};
+use backing::BackingFile;
+use common::open_control;
 
 #[test]
 fn honours_offset_size_limit_and_file_name() {

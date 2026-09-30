@@ -10,14 +10,26 @@
 //! Run them only on a host with an idle loop subsystem, serially:
 //!
 //! ```sh
-//! sudo -E cargo test --test integration exclusive:: -- --ignored --test-threads=1
+//! sudo -E cargo test --test exclusive -- --ignored --test-threads=1
 //! ```
+
+#[path = "common/backing.rs"]
+mod backing;
+mod common;
 
 use std::time::Duration;
 
 use lodown::{Configurable, Control, Device, Writable};
 
-use crate::common::{BackingFile, ENXIO, open_control, spare};
+use backing::BackingFile;
+use common::open_control;
+
+const ENXIO: i32 = 6;
+
+fn spare(slot: u32) -> u32 {
+    const SPARE_BASE: u32 = 1000;
+    SPARE_BASE + (std::process::id() % 200) * 8 + slot
+}
 
 struct Node<'a> {
     control: &'a Control,

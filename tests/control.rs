@@ -2,13 +2,20 @@
 
 //! Creating, removing, and claiming loop numbers.
 
+mod common;
+
 use std::io::ErrorKind;
 
 use lodown::Device;
 
+/// Did the node disappear between get_free and the open?
+fn vanished(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(6) || error.kind() == ErrorKind::NotFound
+}
+
 #[test]
 fn get_free_returns_a_real_node() {
-    let Some(control) = crate::common::open_control() else {
+    let Some(control) = common::open_control() else {
         return;
     };
 
@@ -18,7 +25,7 @@ fn get_free_returns_a_real_node() {
         let number = control.get_free().expect("get_free");
         match Device::open(number) {
             Ok(_) => return,
-            Err(e) if crate::common::raced(&e) => {}
+            Err(e) if vanished(&e) => {}
             Err(other) => panic!("the claimed node must open: {other}"),
         }
     }
@@ -28,7 +35,7 @@ fn get_free_returns_a_real_node() {
 /// Numbers too large for `c_int` are rejected, not wrapped negative.
 #[test]
 fn numbers_too_large_for_c_int_are_rejected() {
-    let Some(control) = crate::common::open_control() else {
+    let Some(control) = common::open_control() else {
         return;
     };
 
