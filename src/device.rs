@@ -4,7 +4,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Result};
-use std::os::fd::{AsFd, AsRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, IntoRawFd, OwnedFd, RawFd};
 use std::os::raw::{c_int, c_uint};
 
 use zerocopy::FromZeros;
@@ -99,6 +99,72 @@ impl Device {
         let info = LoopInfo::from(status.into());
         LOOP_SET_STATUS64.ioctl(&self.0, &info)?;
         Ok(())
+    }
+}
+
+/// Borrows the underlying file.
+///
+/// [`try_clone`](File::try_clone) is safe against [`clear`](Device::clear):
+/// a clone does not count as another user of the device, so the detach
+/// still happens immediately. A separately opened handle defers it.
+impl AsRef<File> for Device {
+    fn as_ref(&self) -> &File {
+        &self.0
+    }
+}
+
+/// Provides the concrete mutable file reference required by some APIs.
+impl AsMut<File> for Device {
+    fn as_mut(&mut self) -> &mut File {
+        &mut self.0
+    }
+}
+
+impl AsFd for Device {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.0.as_fd()
+    }
+}
+
+impl AsRawFd for Device {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+}
+
+impl IntoRawFd for Device {
+    fn into_raw_fd(self) -> RawFd {
+        self.0.into_raw_fd()
+    }
+}
+
+/// Takes the file back out. There is no `FromRawFd`, whose method is
+/// `unsafe fn`; convert through [`File`] or [`OwnedFd`] instead.
+impl From<Device> for File {
+    fn from(device: Device) -> Self {
+        device.0
+    }
+}
+
+// Infallible because the ioctls validate the descriptor themselves: one
+// issued against something that is not a loop device fails with `ENOTTY`,
+// so wrapping the wrong file is a clean runtime error rather than
+// unsoundness, and no `TryFrom` could check more than that.
+impl From<File> for Device {
+    fn from(file: File) -> Self {
+        Device(file)
+    }
+}
+
+impl From<Device> for OwnedFd {
+    fn from(device: Device) -> Self {
+        device.0.into()
+    }
+}
+
+impl From<OwnedFd> for Device {
+    fn from(fd: OwnedFd) -> Self {
+        Device(File::from(fd))
     }
 }
 
