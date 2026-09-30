@@ -2,6 +2,7 @@
 
 //! Binding a backing file, and the operations on a bound device.
 
+use std::ffi::CStr;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write as _};
 use std::num::NonZero;
@@ -47,8 +48,7 @@ fn configure_round_trips_every_field() {
         return;
     };
 
-    let mut file_name = Name::default();
-    file_name[..8].copy_from_slice(b"disk.img");
+    let file_name = Name::new("disk.img").expect("under the length limit");
 
     let backing = BackingFile::create("allfields");
     let config = Configurable {
@@ -68,7 +68,10 @@ fn configure_round_trips_every_field() {
     assert_eq!(status.number, number);
     assert_eq!(status.offset, OFFSET);
     assert_eq!(status.size_limit, NonZero::new(SIZE_LIMIT));
-    assert_eq!(&status.file_name[..8], b"disk.img");
+    assert_eq!(
+        AsRef::<CStr>::as_ref(&status.file_name).to_bytes(),
+        b"disk.img"
+    );
     assert!(status.partscan);
     assert!(status.read_only);
 

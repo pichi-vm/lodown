@@ -187,7 +187,7 @@ impl From<LoopInfo> for Readable {
                 writable: Writable {
                     offset: info.offset,
                     size_limit: NonZero::new(info.sizelimit),
-                    file_name: info.file_name.into(),
+                    file_name: Name::from_field(info.file_name),
                     autoclear: info.flags & LO_FLAGS_AUTOCLEAR != 0,
                     partscan: info.flags & LO_FLAGS_PARTSCAN != 0,
                 },
@@ -210,7 +210,7 @@ mod tests {
         Writable {
             offset: 4096,
             size_limit: NonZero::new(8192),
-            file_name: [b'x'; crate::uapi::LO_NAME_SIZE].into(),
+            file_name: Name::from_field([b'x'; crate::uapi::LO_NAME_SIZE]),
             autoclear: true,
             partscan: true,
         }
@@ -269,7 +269,8 @@ mod tests {
         assert_eq!(status.inode, 4);
         assert_eq!(status.rdevice, 5);
         assert_eq!(status.number, 6);
-        assert_eq!(*status.file_name, [b'y'; crate::uapi::LO_NAME_SIZE]);
+        let field: &[u8; crate::uapi::LO_NAME_SIZE] = status.file_name.as_ref();
+        assert_eq!(field, &[b'y'; crate::uapi::LO_NAME_SIZE]);
         assert!(status.read_only && status.autoclear && status.partscan && status.direct_io);
     }
 

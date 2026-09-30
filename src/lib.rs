@@ -19,4 +19,4 @@ mod uapi;
 pub use control::Control;
 pub use device::Device;
 pub use info::{Configurable, Readable, Writable};
-pub use name::Name;
+pub use name::{MAX_NAME_LEN, Name};

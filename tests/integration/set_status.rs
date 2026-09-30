@@ -6,6 +6,7 @@
 //! its settable and clearable masks. These pin down which ones those are —
 //! the behaviour the `Writable` / `Configurable` split encodes.
 
+use std::ffi::CStr;
 use std::num::NonZero;
 
 use lodown::{Configurable, Name, Writable};
@@ -21,8 +22,7 @@ fn honours_offset_size_limit_and_file_name() {
     let backing = BackingFile::create("setstatus");
     let (device, _) = attach(&control, &backing.file, 0, Configurable::default());
 
-    let mut file_name = Name::default();
-    file_name[..7].copy_from_slice(b"new.img");
+    let file_name = Name::new("new.img").expect("under the length limit");
 
     let mut writable = Writable::from(device.status().expect("status"));
     writable.offset = 8192;
@@ -33,7 +33,10 @@ fn honours_offset_size_limit_and_file_name() {
     let status = device.status().expect("status after set");
     assert_eq!(status.offset, 8192);
     assert_eq!(status.size_limit, NonZero::new(1 << 20));
-    assert_eq!(&status.file_name[..7], b"new.img");
+    assert_eq!(
+        AsRef::<CStr>::as_ref(&status.file_name).to_bytes(),
+        b"new.img"
+    );
 
     device.clear().expect("detach");
 }
