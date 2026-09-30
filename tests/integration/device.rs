@@ -163,7 +163,7 @@ fn autoclear_detaches_when_the_last_handle_closes() {
 }
 
 #[test]
-fn change_backing_swaps_the_file_on_a_read_only_device() {
+fn change_swaps_the_file_on_a_read_only_device() {
     let Some(control) = open_control() else {
         return;
     };
@@ -174,7 +174,7 @@ fn change_backing_swaps_the_file_on_a_read_only_device() {
     // `LOOP_CHANGE_FD` is only valid for a read-only device.
     let (writable, _) = attach(&control, &a.file, 0, Configurable::default());
     assert_eq!(
-        writable.change_backing(&b.file).unwrap_err().raw_os_error(),
+        writable.change(&b.file).unwrap_err().raw_os_error(),
         Some(22),
         "expected EINVAL on a read-write device"
     );
@@ -187,7 +187,7 @@ fn change_backing_swaps_the_file_on_a_read_only_device() {
     let (device, _) = attach(&control, &a.file, 0, config);
     assert_eq!(device.status().expect("status").inode, a.inode());
 
-    device.change_backing(&b.file).expect("swap to backing B");
+    device.change(&b.file).expect("swap to backing B");
     assert_eq!(
         device.status().expect("status").inode,
         b.inode(),

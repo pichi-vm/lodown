@@ -57,7 +57,7 @@ impl Device {
     ///
     /// Valid only on a read-only device backed by a file of the same size.
     /// [`Writable::file_name`] keeps naming the old file.
-    pub fn change_backing(&self, backing: impl AsFd) -> Result<()> {
+    pub fn change(&self, backing: impl AsFd) -> Result<()> {
         LOOP_CHANGE_FD.ioctl(&self.0, backing.as_fd().as_raw_fd())?;
         Ok(())
     }

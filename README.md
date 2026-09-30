@@ -50,7 +50,7 @@ fn main() -> std::io::Result<()> {
 - **`Control`** — the `/dev/loop-control` fd; the node factory: `add`,
   `remove`, `get_free`. It never binds a device.
 - **`Device`** — a handle to an opened `/dev/loopN`: `configure`, `clear`,
-  `change_backing`, `status`, `set_status`, `set_capacity`, `set_direct_io`,
+  `change`, `status`, `set_status`, `set_capacity`, `set_direct_io`,
   `set_block_size`. Dropping it closes the node but does *not* detach the
   backing file — call `clear`, or set `Configurable::autoclear` and let the
   kernel detach on last close.
