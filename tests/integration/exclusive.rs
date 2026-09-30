@@ -1,0 +1,155 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tests that require exclusive use of the loop subsystem.
+//!
+//! **These are `#[ignore]`d and must stay that way.** Every test here asserts
+//! something about a loop number *nobody else touches* — that a device is
+//! unbound, or that a number stays absent after removal. Neither property can
+//! be reserved against the rest of the system.
+//!
+//! Run them only on a host with an idle loop subsystem, serially:
+//!
+//! ```sh
+//! sudo -E cargo test --test integration exclusive:: -- --ignored --test-threads=1
+//! ```
+
+use std::time::Duration;
+
+use lodown::{Configurable, Control, Device, Writable};
+
+use crate::common::{BackingFile, ENXIO, open_control, spare};
+
+struct Node<'a> {
+    control: &'a Control,
+    number: Option<u32>,
+}
+
+impl<'a> Node<'a> {
+    fn new(control: &'a Control, number: u32) -> Self {
+        Node {
+            control,
+            number: Some(number),
+        }
+    }
+
+    fn remove(mut self) -> std::io::Result<()> {
+        let number = self.number.take().expect("node is live");
+        self.control.remove(number)
+    }
+}
+
+impl Drop for Node<'_> {
+    fn drop(&mut self) {
+        if let Some(number) = self.number {
+            let _ = self.control.remove(number);
+        }
+    }
+}
+
+/// Regression test: `add` must issue `LOOP_CTL_ADD`, not `LOOP_SET_FD`.
+///
+/// The wrong request number fails with `ENOSYS` and creates nothing, so this
+/// checks the node really appears rather than that the ioctl merely returned.
+#[test]
+#[ignore = "needs an idle loop subsystem; see module docs"]
+fn add_creates_a_usable_node_and_remove_destroys_it() {
+    let Some(control) = open_control() else {
+        return;
+    };
+    let number = spare(0);
+    assert_eq!(control.add(number).expect("add loop device"), number);
+    let node = Node::new(&control, number);
+    let device = Device::open(number).expect("the freshly added node must open");
+
+    // Adding the same number twice must fail (EEXIST).
+    assert!(control.add(number).is_err());
+
+    // The kernel refuses to remove a node while a handle is open.
+    drop(device);
+    node.remove().expect("remove loop device");
+
+    // Gone: neither openable nor removable a second time (ENODEV).
+    assert!(Device::open(number).is_err());
+    assert!(control.remove(number).is_err());
+}
+
+/// Has the kernel torn our binding down yet?
+///
+/// Mid-teardown the device sits in `Lo_rundown`, which `lo_open` rejects with
+/// `ENXIO`, so a failed *open* means "not settled yet" rather than
+/// "detached". A different inode means a concurrent test reclaimed it, which
+/// equally proves our binding is gone.
+fn binding_is_gone(number: u32, our_inode: u64) -> bool {
+    match Device::open(number) {
+        Err(e) if e.raw_os_error() == Some(ENXIO) => false,
+        Err(e) => panic!("re-open failed: {e}"),
+        Ok(device) => match device.status() {
+            Err(e) if e.raw_os_error() == Some(ENXIO) => true,
+            Err(e) => panic!("status failed: {e}"),
+            Ok(status) => status.inode != our_inode,
+        },
+    }
+}
+
+#[test]
+#[ignore = "needs an idle loop subsystem; see module docs"]
+fn autoclear_detaches_when_the_last_handle_closes() {
+    let Some(control) = open_control() else {
+        return;
+    };
+
+    // Own the number outright: a device from `get_free` can be reclaimed by a
+    // parallel test the moment autoclear releases it, which would leave this
+    // test watching someone else's binding.
+    let number = spare(1);
+    control.add(number).expect("add loop device");
+    let node = Node::new(&control, number);
+
+    let backing = BackingFile::create("autoclear");
+    let config = Configurable {
+        writable: Writable {
+            autoclear: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let device = Device::open(number).expect("open device node");
+    device
+        .configure(&backing.file, 0, config)
+        .expect("configure");
+    assert!(device.status().is_ok(), "bound while the handle is open");
+
+    // Closing our only handle is what should trigger the detach.
+    drop(device);
+
+    // Re-open per attempt rather than holding a handle across the wait — an
+    // open handle is itself a user, which would keep autoclear from firing.
+    let mut attempts = 0;
+    while !binding_is_gone(number, backing.inode()) {
+        attempts += 1;
+        assert!(attempts < 100, "autoclear never detached the backing file");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    node.remove().expect("remove loop device");
+}
+
+#[test]
+#[ignore = "needs an idle loop subsystem; see module docs"]
+fn unbound_device_reports_enxio() {
+    let Some(control) = open_control() else {
+        return;
+    };
+
+    // Own the number outright — `get_free` doesn't reserve it, so a parallel
+    // test could bind it and make these assertions spuriously fail.
+    let number = spare(2);
+    control.add(number).expect("add loop device");
+    let node = Node::new(&control, number);
+    let device = Device::open(number).expect("open device node");
+
+    assert_eq!(device.status().unwrap_err().raw_os_error(), Some(ENXIO));
+    assert_eq!(device.clear().unwrap_err().raw_os_error(), Some(ENXIO));
+
+    node.remove().expect("remove loop device");
+}

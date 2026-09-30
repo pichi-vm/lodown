@@ -13,4 +13,5 @@ mod common;
 
 mod control;
 mod device;
+mod exclusive;
 mod set_status;

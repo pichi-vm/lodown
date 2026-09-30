@@ -6,11 +6,10 @@ use std::ffi::CStr;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Write as _};
 use std::num::NonZero;
-use std::time::Duration;
 
-use lodown::{Configurable, Device, Name, Writable};
+use lodown::{Configurable, Name, Writable};
 
-use crate::common::{BACKING_SIZE, BackingFile, ENXIO, attach, open_control};
+use crate::common::{BACKING_SIZE, BackingFile, attach, open_control};
 
 const OFFSET: u64 = 64 * 1024;
 const SIZE_LIMIT: u64 = 1024 * 1024;
@@ -106,65 +105,6 @@ fn read_only_device_rejects_writes() {
     device.clear().expect("detach");
 }
 
-/// Has the kernel torn our binding down yet?
-///
-/// Mid-teardown the device sits in `Lo_rundown`, which `lo_open` rejects with
-/// `ENXIO`, so a failed *open* means "not settled yet" rather than
-/// "detached". A different inode means a concurrent test reclaimed it, which
-/// equally proves our binding is gone.
-fn binding_is_gone(number: u32, our_inode: u64) -> bool {
-    match Device::open(number) {
-        Err(e) if e.raw_os_error() == Some(ENXIO) => false,
-        Err(e) => panic!("re-open failed: {e}"),
-        Ok(device) => match device.status() {
-            Err(e) if e.raw_os_error() == Some(ENXIO) => true,
-            Err(e) => panic!("status failed: {e}"),
-            Ok(status) => status.inode != our_inode,
-        },
-    }
-}
-
-#[test]
-fn autoclear_detaches_when_the_last_handle_closes() {
-    let Some(control) = open_control() else {
-        return;
-    };
-
-    // Own the number outright: a device from `get_free` can be reclaimed by a
-    // parallel test the moment autoclear releases it, which would leave this
-    // test watching someone else's binding.
-    let number = crate::common::spare(1);
-    control.add(number).expect("add loop device");
-
-    let backing = BackingFile::create("autoclear");
-    let config = Configurable {
-        writable: Writable {
-            autoclear: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let device = Device::open(number).expect("open device node");
-    device
-        .configure(&backing.file, 0, config)
-        .expect("configure");
-    assert!(device.status().is_ok(), "bound while the handle is open");
-
-    // Closing our only handle is what should trigger the detach.
-    drop(device);
-
-    // Re-open per attempt rather than holding a handle across the wait — an
-    // open handle is itself a user, which would keep autoclear from firing.
-    let mut attempts = 0;
-    while !binding_is_gone(number, backing.inode()) {
-        attempts += 1;
-        assert!(attempts < 100, "autoclear never detached the backing file");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    control.remove(number).expect("remove loop device");
-}
-
 #[test]
 fn change_swaps_the_file_on_a_read_only_device() {
     let Some(control) = open_control() else {
@@ -250,22 +190,4 @@ fn set_capacity_and_block_size_are_accepted() {
     );
 
     device.clear().expect("detach");
-}
-
-#[test]
-fn unbound_device_reports_enxio() {
-    let Some(control) = open_control() else {
-        return;
-    };
-
-    // Own the number outright — `get_free` doesn't reserve it, so a parallel
-    // test could bind it and make these assertions spuriously fail.
-    let number = crate::common::spare(2);
-    control.add(number).expect("add loop device");
-    let device = Device::open(number).expect("open device node");
-
-    assert_eq!(device.status().unwrap_err().raw_os_error(), Some(ENXIO));
-    assert_eq!(device.clear().unwrap_err().raw_os_error(), Some(ENXIO));
-
-    control.remove(number).expect("remove loop device");
 }
