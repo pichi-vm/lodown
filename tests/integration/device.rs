@@ -9,7 +9,7 @@ use std::num::NonZero;
 
 use lodown::{Configurable, Name, Writable};
 
-use crate::common::{BACKING_SIZE, BackingFile, attach, open_control};
+use crate::common::{BACKING_SIZE, BackingFile, open_control};
 
 const OFFSET: u64 = 64 * 1024;
 const SIZE_LIMIT: u64 = 1024 * 1024;
@@ -25,14 +25,15 @@ fn configure_defaults_leave_a_writable_device() {
     };
 
     let backing = BackingFile::create("defaults");
-    let (device, number) = attach(&control, &backing.file, 0, Configurable::default());
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
 
     let status = device.status().expect("status");
     assert!(
         !status.read_only,
         "a default configure over a read-write backing file must be writable"
     );
-    assert_eq!(status.number, number);
     assert_eq!(status.inode, backing.inode());
     assert_eq!(status.offset, 0);
     assert_eq!(status.size_limit, None, "no limit means the whole file");
@@ -61,10 +62,11 @@ fn configure_round_trips_every_field() {
         read_only: true,
         direct_io: false,
     };
-    let (device, number) = attach(&control, &backing.file, 4096, config);
+    let device = control
+        .attach(&backing.file, 4096, config)
+        .expect("attach a loop device");
 
     let status = device.status().expect("status");
-    assert_eq!(status.number, number);
     assert_eq!(status.offset, OFFSET);
     assert_eq!(status.size_limit, NonZero::new(SIZE_LIMIT));
     assert_eq!(
@@ -89,7 +91,10 @@ fn read_only_device_rejects_writes() {
         read_only: true,
         ..Default::default()
     };
-    let (device, number) = attach(&control, &backing.file, 0, config);
+    let device = control
+        .attach(&backing.file, 0, config)
+        .expect("attach a loop device");
+    let number = device.status().expect("status").number;
     assert!(device.status().expect("status").read_only);
 
     // The node still opens read-write; it's the write that the kernel stops.
@@ -115,7 +120,9 @@ fn change_swaps_the_file_on_a_read_only_device() {
     let b = BackingFile::create("swap-b");
 
     // `LOOP_CHANGE_FD` is only valid for a read-only device.
-    let (writable, _) = attach(&control, &a.file, 0, Configurable::default());
+    let writable = control
+        .attach(&a.file, 0, Configurable::default())
+        .expect("attach a loop device");
     assert_eq!(
         writable.change(&b.file).unwrap_err().raw_os_error(),
         Some(22),
@@ -127,7 +134,9 @@ fn change_swaps_the_file_on_a_read_only_device() {
         read_only: true,
         ..Default::default()
     };
-    let (device, _) = attach(&control, &a.file, 0, config);
+    let device = control
+        .attach(&a.file, 0, config)
+        .expect("attach a loop device");
     assert_eq!(device.status().expect("status").inode, a.inode());
 
     device.change(&b.file).expect("swap to backing B");
@@ -147,7 +156,9 @@ fn set_direct_io_toggles() {
     };
 
     let backing = BackingFile::create("directio");
-    let (device, _) = attach(&control, &backing.file, 0, Configurable::default());
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
 
     // Direct I/O may be unsupported on the backing filesystem (e.g. tmpfs),
     // which the kernel reports as EINVAL/EOPNOTSUPP; skip only on those. Any
@@ -174,7 +185,9 @@ fn set_capacity_and_block_size_are_accepted() {
     };
 
     let backing = BackingFile::create("capacity");
-    let (device, _) = attach(&control, &backing.file, 0, Configurable::default());
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
 
     backing
         .file

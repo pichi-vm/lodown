@@ -11,7 +11,7 @@ use std::num::NonZero;
 
 use lodown::{Configurable, Name, Writable};
 
-use crate::common::{BackingFile, attach, open_control};
+use crate::common::{BackingFile, open_control};
 
 #[test]
 fn honours_offset_size_limit_and_file_name() {
@@ -20,7 +20,9 @@ fn honours_offset_size_limit_and_file_name() {
     };
 
     let backing = BackingFile::create("setstatus");
-    let (device, _) = attach(&control, &backing.file, 0, Configurable::default());
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
 
     let file_name = Name::new("new.img").expect("under the length limit");
 
@@ -49,7 +51,9 @@ fn sets_and_clears_autoclear() {
     };
 
     let backing = BackingFile::create("autoclear");
-    let (device, _) = attach(&control, &backing.file, 0, Configurable::default());
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
 
     let mut writable = Writable::from(device.status().expect("status"));
     writable.autoclear = true;
@@ -71,7 +75,9 @@ fn sets_but_cannot_clear_partscan() {
     };
 
     let backing = BackingFile::create("partscan");
-    let (device, _) = attach(&control, &backing.file, 0, Configurable::default());
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
 
     let mut writable = Writable::from(device.status().expect("status"));
     writable.partscan = true;
@@ -100,7 +106,9 @@ fn leaves_the_configure_only_flags_alone() {
         read_only: true,
         ..Default::default()
     };
-    let (device, _) = attach(&control, &backing.file, 0, config);
+    let device = control
+        .attach(&backing.file, 0, config)
+        .expect("attach a loop device");
 
     let before = device.status().expect("status");
     assert!(before.read_only);

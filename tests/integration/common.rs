@@ -6,9 +6,8 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
-use lodown::{Configurable, Control, Device};
+use lodown::Control;
 
 /// What every loop ioctl reports for an unbound device.
 pub(crate) const ENXIO: i32 = 6;
@@ -21,10 +20,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 /// Loop numbers at or above this belong to a test that owns them outright.
 pub(crate) const SPARE_BASE: u32 = 1000;
 
-/// A loop number reserved for one test, which [`attach`] will never take.
-///
-/// Tests run in parallel, so each takes its own `slot`; the per-process
-/// stride keeps concurrent binaries apart.
+/// A loop number reserved for one exclusive test.
 pub(crate) fn spare(slot: u32) -> u32 {
     SPARE_BASE + (std::process::id() % 200) * 8 + slot
 }
@@ -45,41 +41,6 @@ pub(crate) fn open_control() -> Option<Control> {
             None
         }
     }
-}
-
-/// Claims, opens, and binds a device, retrying the `get_free` race.
-///
-/// `get_free` reserves nothing and draws from the same pool the `spare`
-/// devices land in, so between the claim and the bind a parallel test can
-/// remove the device (`ENXIO`/`ENOENT` from the open) or bind it first
-/// (`EBUSY` from the configure). Both mean "try another number".
-pub(crate) fn attach(
-    control: &Control,
-    backing: &File,
-    block_size: u32,
-    config: Configurable,
-) -> (Device, u32) {
-    for _ in 0..200 {
-        let number = control.get_free().expect("get_free");
-        if number >= SPARE_BASE {
-            // `get_free` hands back the lowest unbound device, which under
-            // load can be a `spare` another test owns. Leave it alone and
-            // wait for one of the shared devices to come free.
-            std::thread::sleep(Duration::from_millis(5));
-            continue;
-        }
-        let device = match Device::open(number) {
-            Ok(device) => device,
-            Err(e) if raced(&e) => continue,
-            Err(other) => panic!("open device node: {other}"),
-        };
-        match device.configure(backing, block_size, config) {
-            Ok(()) => return (device, number),
-            Err(e) if e.kind() == ErrorKind::ResourceBusy => {}
-            Err(other) => panic!("configure failed: {other}"),
-        }
-    }
-    panic!("kept losing the get-free/configure race");
 }
 
 /// Did a parallel test remove this device out from under us?
