@@ -4,13 +4,18 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "Apache-2.0"
-description = "High-level, iocuddle-based Linux loop-device ioctl layer."
+description = "Attach files to Linux loop devices, without hand-packing ioctl structs."
 repository = "https://github.com/pichi-vm/lodown"
 homepage = "https://github.com/pichi-vm/lodown"
+documentation = "https://docs.rs/lodown"
 readme = "README.md"
 keywords = ["linux", "loop", "loopback", "ioctl", "block-device"]
 categories = ["os::unix-apis", "api-bindings"]
+exclude = ["/.github"]
 
 [dependencies]
 iocuddle = "0.3"
 zerocopy = { version = "0.8", features = ["derive"] }
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
