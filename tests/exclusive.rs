@@ -15,6 +15,8 @@
 
 mod common;
 
+use std::io::ErrorKind;
+
 use lodown::{Control, Device};
 
 use common::open_control;
@@ -91,7 +93,15 @@ fn unbound_device_reports_enxio() {
     let device = Device::open(number).expect("open device node");
 
     assert_eq!(device.status().unwrap_err().raw_os_error(), Some(ENXIO));
+
+    // `clear` consumes the device, so our only opener closes even on error.
     assert_eq!(device.clear().unwrap_err().raw_os_error(), Some(ENXIO));
 
-    node.remove().expect("remove loop device");
+    match node.remove() {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::ResourceBusy => {
+            panic!("something else took loop{number} mid-test; see module docs")
+        }
+        Err(other) => panic!("remove loop device: {other}"),
+    }
 }
