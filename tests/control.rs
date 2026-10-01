@@ -14,10 +14,9 @@ fn vanished(error: &std::io::Error) -> bool {
 }
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn get_free_returns_a_real_node() {
-    let Some(control) = common::open_control() else {
-        return;
-    };
+    let control = common::open_control();
 
     // A parallel test can remove the claimed device before we open it, so
     // retry rather than assert on a single draw.
@@ -34,10 +33,9 @@ fn get_free_returns_a_real_node() {
 
 /// Numbers too large for `c_int` are rejected, not wrapped negative.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn numbers_too_large_for_c_int_are_rejected() {
-    let Some(control) = common::open_control() else {
-        return;
-    };
+    let control = common::open_control();
 
     assert_eq!(
         control.add(u32::MAX).unwrap_err().kind(),

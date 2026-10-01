@@ -60,9 +60,7 @@ impl Drop for Node<'_> {
 #[test]
 #[ignore = "needs an idle loop subsystem; see module docs"]
 fn add_creates_a_usable_node_and_remove_destroys_it() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
     let number = spare(0);
     assert_eq!(control.add(number).expect("add loop device"), number);
     let node = Node::new(&control, number);
@@ -83,9 +81,7 @@ fn add_creates_a_usable_node_and_remove_destroys_it() {
 #[test]
 #[ignore = "needs an idle loop subsystem; see module docs"]
 fn unbound_device_reports_enxio() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     // Own the number outright — `get_free` doesn't reserve it, so a parallel
     // test could bind it and make these assertions spuriously fail.

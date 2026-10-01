@@ -19,10 +19,9 @@ use backing::BackingFile;
 use common::open_control;
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn honours_offset_size_limit_and_file_name() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("setstatus");
     let device = control
@@ -50,10 +49,9 @@ fn honours_offset_size_limit_and_file_name() {
 
 /// `autoclear` is the only flag this ioctl can turn back off.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn sets_and_clears_autoclear() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("autoclear");
     let device = control
@@ -74,10 +72,9 @@ fn sets_and_clears_autoclear() {
 
 /// `partscan` is settable but not clearable, so clearing is a silent no-op.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn sets_but_cannot_clear_partscan() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("partscan");
     let device = control
@@ -101,10 +98,9 @@ fn sets_but_cannot_clear_partscan() {
 
 /// A status round trip must leave the configure-only flags untouched.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn leaves_the_configure_only_flags_alone() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("configonly");
     let config = Configurable {

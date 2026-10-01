@@ -274,21 +274,10 @@ mod tests {
         }
     }
 
-    /// Binds a fresh 1 MiB backing file, or `None` without `CAP_SYS_ADMIN`.
-    fn bind(tag: &str, config: Configurable) -> Option<Bound> {
-        // `LODOWN_REQUIRE_ROOT` turns this skip into a failure, so a CI job
-        // that loses its privileges says so instead of passing vacuously.
-        let control = match Control::open() {
-            Ok(control) => control,
-            Err(error) => {
-                assert!(
-                    std::env::var_os("LODOWN_REQUIRE_ROOT").is_none(),
-                    "LODOWN_REQUIRE_ROOT is set, but /dev/loop-control could not be opened: {error}"
-                );
-                eprintln!("skip: requires root (or CAP_SYS_ADMIN) for /dev/loop-control");
-                return None;
-            }
-        };
+    /// Binds a fresh 1 MiB backing file.
+    fn bind(tag: &str, config: Configurable) -> Bound {
+        let control =
+            Control::open().expect("open /dev/loop-control; test requires root or CAP_SYS_ADMIN");
 
         let path =
             std::env::temp_dir().join(format!("lodown-unit-{tag}-{}.img", std::process::id()));
@@ -306,7 +295,7 @@ mod tests {
             let number = control.get_free().expect("get_free");
             let device = Device::open(number).expect("open device node");
             if device.configure(&backing, 0, config).is_ok() {
-                return Some(Bound { device, path });
+                return Bound { device, path };
             }
         }
         panic!("kept losing the get-free/configure race");
@@ -317,10 +306,9 @@ mod tests {
     /// `LOOP_SET_STATUS64` masks both off and still reports success. The
     /// public API cannot express that, so drive the ioctl with raw flags.
     #[test]
+    #[ignore = "requires root or CAP_SYS_ADMIN"]
     fn set_status_silently_ignores_attempts_to_set_configure_only_flags() {
-        let Some(bound) = bind("set-ro", Configurable::default()) else {
-            return;
-        };
+        let bound = bind("set-ro", Configurable::default());
         assert!(!bound.device.status().expect("status").read_only);
 
         let mut info = LoopInfo::new_zeroed();
@@ -342,14 +330,13 @@ mod tests {
 
     /// The same in reverse: a configured `read_only` cannot be cleared.
     #[test]
+    #[ignore = "requires root or CAP_SYS_ADMIN"]
     fn set_status_silently_ignores_attempts_to_clear_read_only() {
         let config = Configurable {
             read_only: true,
             ..Default::default()
         };
-        let Some(bound) = bind("clear-ro", config) else {
-            return;
-        };
+        let bound = bind("clear-ro", config);
         assert!(bound.device.status().expect("status").read_only);
 
         let info = LoopInfo::new_zeroed(); // every flag off, read_only included

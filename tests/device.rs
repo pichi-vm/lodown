@@ -28,10 +28,9 @@ const SIZE_LIMIT: u64 = 1024 * 1024;
 /// `loop_configure` silently ORs in `LO_FLAGS_READ_ONLY` for an `O_RDONLY`
 /// node, yielding a read-only device with no error to notice it by.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn configure_defaults_leave_a_writable_device() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("defaults");
     let device = control
@@ -52,10 +51,9 @@ fn configure_defaults_leave_a_writable_device() {
 }
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn configure_round_trips_every_field() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let file_name = Name::new("disk.img").expect("under the length limit");
 
@@ -90,10 +88,9 @@ fn configure_round_trips_every_field() {
 
 /// The block device must reject writes, not merely report the flag.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn read_only_device_rejects_writes() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("readonly");
     let config = Configurable {
@@ -149,10 +146,9 @@ fn await_detach(number: u32, our_inode: u64, why: &str) {
 }
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn autoclear_detaches_when_the_last_handle_closes() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("autoclear");
     let config = Configurable {
@@ -182,10 +178,9 @@ fn autoclear_detaches_when_the_last_handle_closes() {
 
 /// `clear` defers to autoclear when another opener holds the device.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn clear_defers_to_autoclear_while_another_handle_is_open() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("clear-defer");
     let device = control
@@ -206,10 +201,9 @@ fn clear_defers_to_autoclear_while_another_handle_is_open() {
 
 /// A [`Device`] is itself an open handle, so it holds autoclear off.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn a_device_handle_holds_an_autoclear_device_bound() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("handle-holds");
     let device = control
@@ -244,10 +238,9 @@ fn a_device_handle_holds_an_autoclear_device_bound() {
 }
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn change_swaps_the_file_on_a_read_only_device() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let a = BackingFile::create("swap-a");
     let b = BackingFile::create("swap-b");
@@ -283,10 +276,9 @@ fn change_swaps_the_file_on_a_read_only_device() {
 }
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn set_direct_io_toggles() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("directio");
     let device = control
@@ -312,10 +304,9 @@ fn set_direct_io_toggles() {
 }
 
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn set_capacity_and_block_size_are_accepted() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("capacity");
     let device = control
@@ -348,10 +339,9 @@ fn set_capacity_and_block_size_are_accepted() {
 /// detach) writes through to the backing file. Those live on [`File`],
 /// reached through `AsRef<File>`.
 #[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
 fn device_reads_and_writes_the_backing_files_bytes() {
-    let Some(control) = open_control() else {
-        return;
-    };
+    let control = open_control();
 
     let backing = BackingFile::create("blockio");
     let mut device = control

@@ -2,16 +2,13 @@
 
 ## Running the tests
 
-Integration tests that bind real loop devices need root or `CAP_SYS_ADMIN`.
-Without those privileges they skip rather than fail:
+Tests that bind real loop devices are ignored by default. Run the ordinary
+suite without privileges, and the device tests with root or `CAP_SYS_ADMIN`:
 
 ```sh
-cargo test              # device-dependent tests skip
-sudo -E cargo test      # device-dependent tests run; ignored tests still skip
+cargo test --locked
+sudo -E cargo test --locked --lib --test control --test device --test set_status -- --ignored
 ```
-
-Set `LODOWN_REQUIRE_ROOT=1` to turn a skip into a failure, so a CI job that
-loses its privileges says so instead of passing vacuously.
 
 Two tests assert things about a loop device nobody else touches — that a
 device is unbound, that a removed number stays absent. Neither property can
@@ -42,8 +39,9 @@ cargo fmt --all --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --all-features
 cargo +1.89 test --locked
-sudo -E LODOWN_REQUIRE_ROOT=1 cargo test --locked
+cargo test --locked
+sudo -E cargo test --locked --lib --test control --test device --test set_status -- --ignored
 ```
 
-All five must be clean. Add a test for any behaviour you change: when fixing
+All six must be clean. Add a test for any behaviour you change: when fixing
 a bug, one that would have failed without the fix.
