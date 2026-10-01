@@ -24,33 +24,29 @@ fn main() -> std::io::Result<()> {
 
 ## Configuration
 
-The kernel describes most loop-device state with `loop_info64`.
-`LOOP_GET_STATUS64` and `LOOP_SET_STATUS64` pass it directly, while
-`LOOP_CONFIGURE` embeds it in `loop_config` alongside binding parameters.
-But its fields are not all valid at all times. Some fields the kernel owns
-outright and only reports. Some can only be set while the device is being
-bound. Others are accepted by later status updates, although individual
-flags can still be one-way. The struct does not distinguish them — its own
-header marks fields `/* ioctl r/o */` in a comment — and writing to a field
-the current operation does not accept is not an error. The kernel ignores
-the value and reports success.
+The kernel stores most loop-device state in `loop_info64`, embedding it in
+`loop_config` while binding. Its fields do not all have the same write rules:
+some the kernel owns, some can only be set while binding, and others belong
+to later status updates. Individual flags can still be one-way. The structs
+do not enforce those rules, and the kernel may ignore an invalid write while
+reporting success.
 
 So this crate splits the struct into three types, one per level of access:
 
-- [`Writable`] — fields accepted by `LOOP_SET_STATUS64`; `partscan` can be
-  enabled but not disabled.
-- [`Configurable`] — those plus fields accepted by `LOOP_CONFIGURE` while
-  binding.
-- [`Readable`] — those plus kernel-owned fields reported by
-  `LOOP_GET_STATUS64`.
+- [`Writable`] — fields accepted by later status updates.
+- [`Configurable`] — those plus fields set while binding.
+- [`Readable`] — those plus fields the kernel owns.
 
-Each operation takes the widest type whose fields it accepts, so
-configure-only and kernel-owned fields cannot be submitted to
-`LOOP_SET_STATUS64`. Field-specific kernel rules still apply. Each type
-derefs to the one below, so a [`Readable`] reads every field. Conversion
-implementations also let a [`Readable`] be passed to an operation accepting
-`Into<Writable>`.
+Each operation takes the matching type, so fields it never accepts cannot be
+submitted to it. Field-specific rules still apply: for example, `partscan`
+can be enabled but not disabled. Each type derefs to the one below, so a
+[`Readable`] reads every field, and a [`Readable`] can be passed where a
+[`Writable`] is wanted.
 
 ## License
 
 Apache-2.0.
+
+[`Writable`]: https://docs.rs/lodown/latest/lodown/struct.Writable.html
+[`Configurable`]: https://docs.rs/lodown/latest/lodown/struct.Configurable.html
+[`Readable`]: https://docs.rs/lodown/latest/lodown/struct.Readable.html
