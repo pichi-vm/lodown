@@ -3,6 +3,7 @@ name = "lodown"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
+authors = ["Nathaniel McCallum <nathaniel.mccallum@amd.com>"]
 license = "Apache-2.0"
 description = "Attach files to Linux loop devices, without hand-packing ioctl structs."
 repository = "https://github.com/pichi-vm/lodown"
