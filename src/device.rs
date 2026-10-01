@@ -12,15 +12,26 @@ use zerocopy::FromZeros;
 use crate::info::{Configurable, Readable, Writable};
 use crate::uapi::*;
 
-/// An opened `/dev/loopN` node.
+/// An open `/dev/loopN` node.
 ///
-/// Dropping this closes the node but leaves any backing file attached; use
-/// [`clear`](Self::clear) or [`Writable::autoclear`] to detach.
+/// A `Device` may be bound to a backing file or not, and needs no
+/// [`Control`](crate::Control) either way.
+///
+/// Reading and writing a `Device` reads and writes the backing file's
+/// bytes, through the block layer.
+///
+/// Dropping a `Device` closes the handle but leaves the backing file
+/// attached. Use [`clear`](Self::clear), or [`Writable::autoclear`] for
+/// cleanup that survives a crash.
 #[derive(Debug)]
 pub struct Device(File);
 
 impl Device {
     /// Opens an existing `/dev/loop{number}` read-write.
+    ///
+    /// Use this when you already know which loop device number to open. To
+    /// claim and bind a free device, consider
+    /// [`Control::attach`](crate::Control::attach) instead.
     ///
     /// `LOOP_CONFIGURE` forces `LO_FLAGS_READ_ONLY` when the node was opened
     /// read-only, so read-write is the only mode that can yield a writable
@@ -33,8 +44,16 @@ impl Device {
 
     /// Binds `backing` and applies `config` in one ioctl (`LOOP_CONFIGURE`).
     ///
+    /// To attach a file to a new loop device, consider
+    /// [`Control::attach`](crate::Control::attach) instead: binding a device
+    /// you selected yourself is a race this call does not handle.
+    ///
     /// A `block_size` of zero keeps the kernel default. An `O_RDONLY`
     /// `backing` yields a read-only device whatever `config` asks for.
+    ///
+    /// # Errors
+    ///
+    /// `EBUSY` if another caller bound this device first.
     pub fn configure(
         &self,
         backing: impl AsFd,
@@ -47,7 +66,11 @@ impl Device {
         Ok(())
     }
 
-    /// Detaches the backing file, consuming the handle (`LOOP_CLR_FD`).
+    /// Asks the kernel to detach the backing file (`LOOP_CLR_FD`).
+    ///
+    /// Detaches immediately only if nothing else holds the device open.
+    /// Otherwise it turns on [`Writable::autoclear`] and the kernel detaches
+    /// at last close, so `Ok(())` means "detached, or scheduled to detach".
     pub fn clear(self) -> Result<()> {
         LOOP_CLR_FD.ioctl(&self.0)?;
         Ok(())
