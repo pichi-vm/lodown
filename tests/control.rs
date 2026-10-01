@@ -9,6 +9,9 @@ use std::io::ErrorKind;
 use lodown::Device;
 
 /// Did the node disappear between get_free and the open?
+///
+/// Mirrors the library's own retry condition: `ENXIO` mid-teardown, `ENOENT`
+/// once the removal lands.
 fn vanished(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(6) || error.kind() == ErrorKind::NotFound
 }
