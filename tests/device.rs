@@ -137,6 +137,17 @@ fn binding_is_gone(number: u32, our_inode: u64) -> bool {
     }
 }
 
+/// Waits for the kernel to finish tearing our binding down.
+fn await_detach(number: u32, our_inode: u64, why: &str) {
+    for _ in 0..100 {
+        if binding_is_gone(number, our_inode) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("{why}");
+}
+
 #[test]
 fn autoclear_detaches_when_the_last_handle_closes() {
     let Some(control) = open_control() else {
@@ -162,12 +173,74 @@ fn autoclear_detaches_when_the_last_handle_closes() {
 
     // Reclamation by another test is safe: a different inode also proves our
     // binding detached, so this test does not require an exclusive number.
-    let mut attempts = 0;
-    while !binding_is_gone(number, backing.inode()) {
-        attempts += 1;
-        assert!(attempts < 100, "autoclear never detached the backing file");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    await_detach(
+        number,
+        backing.inode(),
+        "autoclear never detached the backing file",
+    );
+}
+
+/// `clear` defers to autoclear when another opener holds the device.
+#[test]
+fn clear_defers_to_autoclear_while_another_handle_is_open() {
+    let Some(control) = open_control() else {
+        return;
+    };
+
+    let backing = BackingFile::create("clear-defer");
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
+    let number = device.status().expect("status").number;
+
+    let holder = Device::open(number).expect("second handle");
+    device.clear().expect("clear reports success either way");
+
+    let status = holder.status().expect("still bound, not detached");
+    assert_eq!(status.inode, backing.inode(), "binding must still be up");
+    assert!(status.autoclear, "clear must arm autoclear when it defers");
+
+    drop(holder);
+    await_detach(number, backing.inode(), "deferred detach never landed");
+}
+
+/// A [`Device`] is itself an open handle, so it holds autoclear off.
+#[test]
+fn a_device_handle_holds_an_autoclear_device_bound() {
+    let Some(control) = open_control() else {
+        return;
+    };
+
+    let backing = BackingFile::create("handle-holds");
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
+    let number = device.status().expect("status").number;
+
+    let mut writable = Writable::from(device.status().expect("status"));
+    writable.autoclear = true;
+    device.set_status(writable).expect("arm autoclear");
+
+    let inspector = Device::open(number).expect("open while held");
+    assert!(inspector.status().expect("status").autoclear);
+    assert_eq!(
+        inspector.status().expect("status").inode,
+        backing.inode(),
+        "the binding must survive while a handle is open"
+    );
+    drop(inspector);
+
+    assert!(
+        !binding_is_gone(number, backing.inode()),
+        "the Device handle alone must keep the binding up"
+    );
+
+    drop(device);
+    await_detach(
+        number,
+        backing.inode(),
+        "autoclear never detached the backing file",
+    );
 }
 
 #[test]
