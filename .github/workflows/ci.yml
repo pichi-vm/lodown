@@ -57,26 +57,21 @@ jobs:
           sudo losetup -a | sort > /tmp/loop-baseline.txt
           cat /tmp/loop-baseline.txt
 
-      # Everything that needs no privilege, including the doctests. This also
-      # proves the root-gated tests still skip cleanly for contributors who
-      # run the suite as themselves.
-      - name: cargo test (unprivileged, root-gated tests skip)
+      # Everything that needs no privilege, including the doctests. Tests that
+      # bind real loop devices are ignored and run separately below.
+      - name: cargo test (unprivileged)
         run: cargo test --locked
 
       # Build as the runner so target/ stays runner-owned and rust-cache can
-      # save it, then execute only the binaries as root.
-      - name: build test binaries
-        run: cargo test --locked --no-run
-
-      # LODOWN_REQUIRE_ROOT turns the skip into a failure: without it a
-      # runner that lost its privileges would report a green, empty suite.
-      - name: cargo test (privileged, skips are fatal)
-        env:
-          LODOWN_REQUIRE_ROOT: 1
+      # save it, then execute only the routine privileged tests as root. The
+      # exclusive suite needs an otherwise idle host and remains opt-in.
+      - name: cargo test (privileged)
         run: |
           set -euo pipefail
           mapfile -t bins < <(
-            cargo test --locked --no-run --message-format=json 2>/dev/null \
+            cargo test --locked --no-run --lib \
+              --test control --test device --test set_status \
+              --message-format=json 2>/dev/null \
               | jq -r 'select(.profile.test == true) | .executable | select(. != null)'
           )
           if [ "${#bins[@]}" -eq 0 ]; then
@@ -85,7 +80,7 @@ jobs:
           fi
           for bin in "${bins[@]}"; do
             echo "::group::$(basename "$bin")"
-            sudo --preserve-env=LODOWN_REQUIRE_ROOT "$bin" --test-threads=8
+            sudo "$bin" --ignored --test-threads=8
             echo "::endgroup::"
           done
 
