@@ -24,23 +24,25 @@ fn main() -> std::io::Result<()> {
 
 ## Configuration
 
-The kernel stores most loop-device state in `loop_info64`, embedding it in
-`loop_config` while binding. Its fields do not all have the same write rules:
-some the kernel owns, some can only be set while binding, and others belong
-to later status updates. Individual flags can still be one-way. The structs
-do not enforce those rules, and the kernel may ignore an invalid write while
-reporting success.
+The kernel describes a loop device with one struct, `loop_info64`, and
+passes it to every ioctl that reads or writes device state. But the fields
+are not all valid at all times. Some the kernel owns outright and only
+reports. Some can only be set while the device is being bound. The rest can
+be changed whenever. The struct does not distinguish them — its own header
+marks fields `/* ioctl r/o */` in a comment — and writing to a field the
+current operation does not accept is not an error. The kernel ignores the
+value and reports success.
 
 So this crate splits the struct into three types, one per level of access:
 
-- [`Writable`] — fields accepted by later status updates.
-- [`Configurable`] — those plus fields set while binding.
-- [`Readable`] — those plus fields the kernel owns.
+- [`Writable`] — fields you can change at any time.
+- [`Configurable`] — those plus the ones fixed while binding.
+- [`Readable`] — those plus the ones the kernel owns.
 
-Each operation takes the matching type, so fields it never accepts cannot be
-submitted to it. Field-specific rules still apply: for example, `partscan`
-can be enabled but not disabled. Each type derefs to the one below, so a
-[`Readable`] reads every field, and a [`Readable`] can be passed where a
+Each operation takes the widest type it can honour, so fields it would ignore
+cannot be submitted to it. Field-specific rules still apply: for example,
+`partscan` can be enabled but not disabled. Each type derefs to the one below,
+so a [`Readable`] reads every field, and a [`Readable`] can be passed where a
 [`Writable`] is wanted.
 
 ## License
