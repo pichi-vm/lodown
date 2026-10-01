@@ -10,11 +10,15 @@ use std::ffi::CStr;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::num::NonZero;
+use std::time::Duration;
 
 use lodown::{Configurable, Device, Name, Writable};
 
 use backing::{BACKING_SIZE, BackingFile};
 use common::open_control;
+
+/// What every loop ioctl reports for an unbound device.
+const ENXIO: i32 = 6;
 
 const OFFSET: u64 = 64 * 1024;
 const SIZE_LIMIT: u64 = 1024 * 1024;
@@ -113,6 +117,57 @@ fn read_only_device_rejects_writes() {
 
     drop(node);
     device.clear().expect("detach");
+}
+
+/// Has the kernel torn our binding down yet?
+///
+/// Mid-teardown the device sits in `Lo_rundown`, which `lo_open` rejects with
+/// `ENXIO`, so a failed *open* means "not settled yet" rather than
+/// "detached". A different inode means a concurrent test reclaimed it, which
+/// equally proves our binding is gone.
+fn binding_is_gone(number: u32, our_inode: u64) -> bool {
+    match Device::open(number) {
+        Err(e) if e.raw_os_error() == Some(ENXIO) => false,
+        Err(e) => panic!("re-open failed: {e}"),
+        Ok(device) => match device.status() {
+            Err(e) if e.raw_os_error() == Some(ENXIO) => true,
+            Err(e) => panic!("status failed: {e}"),
+            Ok(status) => status.inode != our_inode,
+        },
+    }
+}
+
+#[test]
+fn autoclear_detaches_when_the_last_handle_closes() {
+    let Some(control) = open_control() else {
+        return;
+    };
+
+    let backing = BackingFile::create("autoclear");
+    let config = Configurable {
+        writable: Writable {
+            autoclear: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let device = control
+        .attach(&backing.file, 0, config)
+        .expect("attach a loop device");
+    let number = device.status().expect("status").number;
+    assert!(device.status().is_ok(), "bound while the handle is open");
+
+    // Closing our only handle is what should trigger the detach.
+    drop(device);
+
+    // Reclamation by another test is safe: a different inode also proves our
+    // binding detached, so this test does not require an exclusive number.
+    let mut attempts = 0;
+    while !binding_is_gone(number, backing.inode()) {
+        attempts += 1;
+        assert!(attempts < 100, "autoclear never detached the backing file");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

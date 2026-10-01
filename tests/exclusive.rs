@@ -13,15 +13,10 @@
 //! sudo -E cargo test --test exclusive -- --ignored --test-threads=1
 //! ```
 
-#[path = "common/backing.rs"]
-mod backing;
 mod common;
 
-use std::time::Duration;
+use lodown::{Control, Device};
 
-use lodown::{Configurable, Control, Device, Writable};
-
-use backing::BackingFile;
 use common::open_control;
 
 const ENXIO: i32 = 6;
@@ -83,67 +78,6 @@ fn add_creates_a_usable_node_and_remove_destroys_it() {
     // Gone: neither openable nor removable a second time (ENODEV).
     assert!(Device::open(number).is_err());
     assert!(control.remove(number).is_err());
-}
-
-/// Has the kernel torn our binding down yet?
-///
-/// Mid-teardown the device sits in `Lo_rundown`, which `lo_open` rejects with
-/// `ENXIO`, so a failed *open* means "not settled yet" rather than
-/// "detached". A different inode means a concurrent test reclaimed it, which
-/// equally proves our binding is gone.
-fn binding_is_gone(number: u32, our_inode: u64) -> bool {
-    match Device::open(number) {
-        Err(e) if e.raw_os_error() == Some(ENXIO) => false,
-        Err(e) => panic!("re-open failed: {e}"),
-        Ok(device) => match device.status() {
-            Err(e) if e.raw_os_error() == Some(ENXIO) => true,
-            Err(e) => panic!("status failed: {e}"),
-            Ok(status) => status.inode != our_inode,
-        },
-    }
-}
-
-#[test]
-#[ignore = "needs an idle loop subsystem; see module docs"]
-fn autoclear_detaches_when_the_last_handle_closes() {
-    let Some(control) = open_control() else {
-        return;
-    };
-
-    // Own the number outright: a device from `get_free` can be reclaimed by a
-    // parallel test the moment autoclear releases it, which would leave this
-    // test watching someone else's binding.
-    let number = spare(1);
-    control.add(number).expect("add loop device");
-    let node = Node::new(&control, number);
-
-    let backing = BackingFile::create("autoclear");
-    let config = Configurable {
-        writable: Writable {
-            autoclear: true,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let device = Device::open(number).expect("open device node");
-    device
-        .configure(&backing.file, 0, config)
-        .expect("configure");
-    assert!(device.status().is_ok(), "bound while the handle is open");
-
-    // Closing our only handle is what should trigger the detach.
-    drop(device);
-
-    // Re-open per attempt rather than holding a handle across the wait — an
-    // open handle is itself a user, which would keep autoclear from firing.
-    let mut attempts = 0;
-    while !binding_is_gone(number, backing.inode()) {
-        attempts += 1;
-        assert!(attempts < 100, "autoclear never detached the backing file");
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    node.remove().expect("remove loop device");
 }
 
 #[test]
