@@ -11,7 +11,7 @@ documentation = "https://docs.rs/lodown"
 readme = "README.md"
 keywords = ["linux", "loop", "loopback", "ioctl", "block-device"]
 categories = ["os::unix-apis", "api-bindings"]
-exclude = ["/.github"]
+exclude = ["/.github", "/CONTRIBUTING.md"]
 
 [dependencies]
 iocuddle = "0.3"
