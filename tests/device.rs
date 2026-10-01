@@ -23,6 +23,16 @@ const ENXIO: i32 = 6;
 const OFFSET: u64 = 64 * 1024;
 const SIZE_LIMIT: u64 = 1024 * 1024;
 
+/// Building the node path must not panic on the highest legal number.
+///
+/// `/dev/loop1048575` is exactly 16 bytes, the length at which a fixed
+/// 16-byte buffer leaves no room for a NUL.
+#[test]
+fn open_of_an_absent_high_number_errors_rather_than_panicking() {
+    assert!(Device::open(1_048_575).is_err());
+    assert!(Device::open(u32::MAX).is_err());
+}
+
 /// Regression test: the device node must be opened read-write.
 ///
 /// `loop_configure` silently ORs in `LO_FLAGS_READ_ONLY` for an `O_RDONLY`
