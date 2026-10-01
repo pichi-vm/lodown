@@ -1,86 +1,55 @@
 # lodown
 
-A high-level, safe Rust interface to the Linux **loop device** control
-ioctls. Create and remove loop devices, attach and detach backing files,
-read back their status, and adjust capacity, block size, and direct I/O —
-all through typed Rust rather than hand-packed `struct loop_config` buffers.
+Attach files to Linux loop devices from Rust, without hand-packing ioctl
+structs.
 
-Built on [`iocuddle`](https://crates.io/crates/iocuddle); every ioctl goes
-through iocuddle, so the only `unsafe` in the crate is confined to one module
-— the ioctl-number declarations (iocuddle's `const` constructors).
-
-## Requirements
-
-- **Linux** (the loop driver is a Linux subsystem).
-- **`CAP_SYS_ADMIN`** (typically root) to open `/dev/loop-control` and the
-  `/dev/loopN` nodes.
-
-## Quick start
+Needs Linux, and root (or `CAP_SYS_ADMIN`). Contains no `unsafe` code
+outside the ioctl number declarations.
 
 ```no_run
 use std::fs::OpenOptions;
-use lodown::{Configurable, Control, Device};
+use lodown::{Configurable, Control};
 
 fn main() -> std::io::Result<()> {
-    let control = Control::open()?;             // /dev/loop-control
+    let control = Control::open()?;
     let backing = OpenOptions::new().read(true).write(true).open("disk.img")?;
 
-    // Claim a free number and bind the backing file to it. `get_free` does
-    // not reserve the device, so a concurrent claimant can make `configure`
-    // fail with `EBUSY`; retry from `get_free` if that matters.
-    let number = control.get_free()?;
-    let device = Device::open(number)?;
+    let device = control.attach(&backing, 0, Configurable::default())?;
+    println!("attached to /dev/loop{}", device.status()?.number);
 
-    device.configure(&backing, 0, Configurable {
-        read_only: true,
-        ..Default::default()
-    })?;
-
-    let status = device.status()?;
-    println!("/dev/loop{} — offset {}, read_only {}",
-             status.number, status.offset, status.read_only);
-
-    device.clear()?;                            // detach the backing file
+    device.clear()?;
     Ok(())
 }
 ```
 
-## The model
+## Configuration
 
-- **`Control`** — the `/dev/loop-control` fd; the node factory: `add`,
-  `remove`, `get_free`. It never binds a device.
-- **`Device`** — a handle to an opened `/dev/loopN`: `configure`, `clear`,
-  `change`, `status`, `set_status`, `set_capacity`, `set_direct_io`,
-  `set_block_size`. Dropping it closes the node but does *not* detach the
-  backing file — call `clear`, or set `Configurable::autoclear` and let the
-  kernel detach on last close.
+The kernel describes most loop-device state with `loop_info64`.
+`LOOP_GET_STATUS64` and `LOOP_SET_STATUS64` pass it directly, while
+`LOOP_CONFIGURE` embeds it in `loop_config` alongside binding parameters.
+But its fields are not all valid at all times. Some fields the kernel owns
+outright and only reports. Some can only be set while the device is being
+bound. Others are accepted by later status updates, although individual
+flags can still be one-way. The struct does not distinguish them — its own
+header marks fields `/* ioctl r/o */` in a comment — and writing to a field
+the current operation does not accept is not an error. The kernel ignores
+the value and reports success.
 
-Device state is split into three tiers, by which ioctl can actually change
-each field. `LOOP_SET_STATUS64` masks the flags it accepts and returns
-success for the rest, so the split is what keeps a silently-ignored write
-from being expressible:
+So this crate splits the struct into three types, one per level of access:
 
-- **`Writable`** — what `set_status` (`LOOP_SET_STATUS64`) can change:
-  `offset`, `size_limit`, `file_name`, `autoclear`, `partscan`.
-- **`Configurable`** — what `configure` (`LOOP_CONFIGURE`) can set: the
-  `Writable` fields plus `read_only` and `direct_io`, which are fixed for the
-  lifetime of the binding.
-- **`Readable`** — what `status` (`LOOP_GET_STATUS64`) reports: the
-  `Configurable` fields plus the kernel-owned `device`, `inode`, `rdevice`,
-  and `number`.
+- [`Writable`] — fields accepted by `LOOP_SET_STATUS64`; `partscan` can be
+  enabled but not disabled.
+- [`Configurable`] — those plus fields accepted by `LOOP_CONFIGURE` while
+  binding.
+- [`Readable`] — those plus kernel-owned fields reported by
+  `LOOP_GET_STATUS64`.
 
-Each tier derefs to the one below it, so `status.offset`, `status.read_only`,
-and `status.number` all work directly.
-
-## Testing
-
-Unit tests run anywhere; the integration tests under `tests/` need root
-(they create a real loop device and clean it up):
-
-```sh
-cargo test              # unit tests; integration tests skip without root
-sudo -E cargo test      # full suite, exercising the real ioctls
-```
+Each operation takes the widest type whose fields it accepts, so
+configure-only and kernel-owned fields cannot be submitted to
+`LOOP_SET_STATUS64`. Field-specific kernel rules still apply. Each type
+derefs to the one below, so a [`Readable`] reads every field. Conversion
+implementations also let a [`Readable`] be passed to an operation accepting
+`Into<Writable>`.
 
 ## License
 
