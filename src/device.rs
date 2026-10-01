@@ -29,13 +29,12 @@ pub struct Device(File);
 impl Device {
     /// Opens an existing `/dev/loop{number}` read-write.
     ///
-    /// Use this when you already know which loop device number to open. To
-    /// claim and bind a free device, consider
-    /// [`Control::attach`](crate::Control::attach) instead.
+    /// Opens a loop device number you already know. To claim and bind a free
+    /// device, consider [`Control::attach`](crate::Control::attach) instead.
     ///
-    /// `LOOP_CONFIGURE` forces `LO_FLAGS_READ_ONLY` when the node was opened
-    /// read-only, so read-write is the only mode that can yield a writable
-    /// device; request a read-only one with [`Configurable::read_only`].
+    /// Opening the node read-only forces the loop device to be read-only, so
+    /// this opens it read-write. Request a read-only binding with
+    /// [`Configurable::read_only`].
     pub fn open(number: c_uint) -> Result<Self> {
         let path = format!("/dev/loop{number}");
         let file = OpenOptions::new().read(true).write(true).open(path)?;
