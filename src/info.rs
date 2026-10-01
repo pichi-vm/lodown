@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
-//! Device state, split by which ioctl can touch each field.
+//! Device state, split by when each field can be changed.
 //!
-//! [`Writable`] ⊂ [`Configurable`] ⊂ [`Readable`]. `LOOP_SET_STATUS64`
-//! discards the flags it does not accept and still reports success, so
-//! `read_only` and `direct_io` are absent from [`Writable`] to keep a
-//! silently ignored write from being expressible.
+//! [`Writable`] ⊂ [`Configurable`] ⊂ [`Readable`]: changeable at any time,
+//! fixed once bound, read-only.
 
 use std::num::NonZero;
 use std::ops::{Deref, DerefMut};
@@ -43,7 +41,6 @@ pub struct Writable {
 /// What [`Device::configure`](crate::Device::configure) can set.
 ///
 /// [`Writable`] plus the two flags fixed for the life of the binding.
-/// Derefs to [`Writable`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Configurable {
     /// The fields that stay changeable after binding.
@@ -66,8 +63,7 @@ pub struct Configurable {
 
 /// What [`Device::status`](crate::Device::status) reports.
 ///
-/// [`Configurable`] plus the identifiers the kernel owns. Derefs to
-/// [`Configurable`], so every field is reachable directly.
+/// [`Configurable`] plus the identifiers the kernel owns.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Readable {
     /// The fields a caller can set.
