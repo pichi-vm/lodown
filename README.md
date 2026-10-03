@@ -26,7 +26,7 @@ fn main() -> std::io::Result<()> {
 
 The kernel describes a loop device with one struct, `loop_info64`, and
 passes it to every ioctl that reads or writes device state. But the fields
-are not all valid at all times. Some the kernel owns outright and only
+are not all valid at all times. Some fields the kernel owns outright and only
 reports. Some can only be set while the device is being bound. The rest can
 be changed whenever. The struct does not distinguish them — its own header
 marks fields `/* ioctl r/o */` in a comment — and writing to a field the
