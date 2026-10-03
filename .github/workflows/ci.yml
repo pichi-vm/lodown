@@ -27,7 +27,7 @@ jobs:
       - run: cargo test --locked
 
   lint:
-    name: fmt, clippy, rustdoc
+    name: fmt, clippy, rustdoc, package
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +43,8 @@ jobs:
         run: cargo doc --locked --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+      - name: cargo package
+        run: cargo package --locked
 
   test:
     name: test suite
