@@ -17,6 +17,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
   msrv:
     name: Rust 1.89
     runs-on: ubuntu-24.04
