@@ -16,6 +16,13 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Fail-fast DAG (jobs stay in this workflow):
+#
+#   Tier 1 — quick checks (parallel): cargo-deny, lint
+#   Tier 2 — after Tier 1 succeeds (parallel with each other):
+#            msrv, test
+#
+# A red Tier-1 job skips the expensive Tier-2 work.
 jobs:
   cargo-deny:
     name: cargo-deny
@@ -28,6 +35,7 @@ jobs:
 
   msrv:
     name: Rust 1.89
+    needs: [cargo-deny, lint]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -57,6 +65,7 @@ jobs:
 
   test:
     name: test suite
+    needs: [cargo-deny, lint]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
