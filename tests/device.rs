@@ -202,11 +202,16 @@ fn clear_defers_to_autoclear_while_another_handle_is_open() {
     let holder = Device::open(number).expect("second handle");
     device.clear().expect("clear reports success either way");
 
-    let status = holder.status().expect("still bound, not detached");
+    let status = device.status().expect("still bound, not detached");
     assert_eq!(status.inode, backing.inode(), "binding must still be up");
     assert!(status.autoclear, "clear must arm autoclear when it defers");
 
     drop(holder);
+    assert!(
+        !binding_is_gone(number, backing.inode()),
+        "dropping the other handle must not detach while this Device is open"
+    );
+    drop(device);
     await_detach(number, backing.inode(), "deferred detach never landed");
 }
 

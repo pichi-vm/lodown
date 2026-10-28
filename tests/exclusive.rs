@@ -91,12 +91,15 @@ fn unbound_device_reports_enxio() {
     let number = spare(2);
     control.add(number).expect("add loop device");
     let node = Node::new(&control, number);
-    let device = Device::open(number).expect("open device node");
+    {
+        let device = Device::open(number).expect("open device node");
 
-    assert_eq!(device.status().unwrap_err().raw_os_error(), Some(ENXIO));
+        assert_eq!(device.status().unwrap_err().raw_os_error(), Some(ENXIO));
 
-    // `clear` consumes the device, so our only opener closes even on error.
-    assert_eq!(device.clear().unwrap_err().raw_os_error(), Some(ENXIO));
+        // `clear` leaves the descriptor open, including when it fails. The
+        // kernel refuses to remove a node while that opener is live.
+        assert_eq!(device.clear().unwrap_err().raw_os_error(), Some(ENXIO));
+    }
 
     match node.remove() {
         Ok(()) => {}

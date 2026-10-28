@@ -24,6 +24,7 @@ use crate::uapi::*;
 /// Dropping a `Device` closes the handle but leaves the backing file
 /// attached. Use [`clear`](Self::clear), or [`Writable::autoclear`] for
 /// cleanup that survives a crash.
+/// A clear request also needs the handle to close for the detach to finish.
 #[derive(Debug)]
 pub struct Device(File);
 
@@ -68,10 +69,16 @@ impl Device {
 
     /// Asks the kernel to detach the backing file (`LOOP_CLR_FD`).
     ///
-    /// Detaches immediately only if nothing else holds the device open.
-    /// Otherwise it turns on [`Writable::autoclear`] and the kernel detaches
-    /// at last close, so `Ok(())` means "detached, or scheduled to detach".
-    pub fn clear(self) -> Result<()> {
+    /// Only requests a detach. This handle stays open on success or error,
+    /// so callers can check the result or retry. The detach finishes when
+    /// the last open handle to the device closes, including this one.
+    /// Letting a handle go out of scope closes it.
+    ///
+    /// With another opener, this enables [`Writable::autoclear`]: the kernel
+    /// detaches the device when the last handle closes. An open handle
+    /// blocks a full detach. Even if [`status`](Self::status) returns
+    /// `ENXIO`, the device may still be tearing down.
+    pub fn clear(&self) -> Result<()> {
         LOOP_CLR_FD.ioctl(&self.0)?;
         Ok(())
     }
@@ -127,9 +134,9 @@ impl Device {
 
 /// Borrows the underlying file.
 ///
-/// [`try_clone`](File::try_clone) is safe against [`clear`](Device::clear):
-/// a clone does not count as another user of the device, so the detach
-/// still happens immediately. A separately opened handle defers it.
+/// Cloning with [`try_clone`](File::try_clone) to retain a handle after
+/// [`clear`](Device::clear) is unnecessary: `clear` leaves it open.
+/// A separately opened handle defers detach.
 impl AsRef<File> for Device {
     fn as_ref(&self) -> &File {
         &self.0
