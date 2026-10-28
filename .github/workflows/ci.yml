@@ -18,27 +18,44 @@ concurrency:
 
 # Fail-fast DAG (jobs stay in this workflow):
 #
-#   Tier 1 — quick checks (parallel): cargo-deny, lint
+#   Tier 1 — quick checks (parallel):
+#            license-headers, cargo-deny, commit-messages, lint
 #   Tier 2 — after Tier 1 succeeds (parallel with each other):
 #            msrv, test
 #
 # A red Tier-1 job skips the expensive Tier-2 work.
 jobs:
+  license-headers:
+    name: license headers
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: korandoru/hawkeye@v6
+
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6.0.3
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
 
-  msrv:
-    name: Rust 1.89
-    needs: [cargo-deny, lint]
+  commit-messages:
+    name: commit messages
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+      - run: pipx run gitlint --commits "origin/${{ github.base_ref || 'main' }}..HEAD"
+
+  msrv:
+    name: Rust 1.89
+    needs: [license-headers, cargo-deny, commit-messages, lint]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6.0.3
       - uses: dtolnay/rust-toolchain@1.89
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
@@ -47,7 +64,7 @@ jobs:
     name: fmt, clippy, rustdoc, package
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6.0.3
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -65,10 +82,10 @@ jobs:
 
   test:
     name: test suite
-    needs: [cargo-deny, lint]
+    needs: [license-headers, cargo-deny, commit-messages, lint]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6.0.3
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
