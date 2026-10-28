@@ -280,15 +280,10 @@ mod tests {
             .expect("create backing file");
         backing.set_len(1 << 20).expect("size backing file");
 
-        // `get_free` doesn't reserve, so retry the claim/configure pair.
-        for _ in 0..100 {
-            let number = control.get_free().expect("get_free");
-            let device = Device::open(number).expect("open device node");
-            if device.configure(&backing, 0, config).is_ok() {
-                return Bound { device, path };
-            }
-        }
-        panic!("kept losing the get-free/configure race");
+        let device = control
+            .attach(&backing, 0, config)
+            .expect("attach backing file");
+        Bound { device, path }
     }
 
     /// Why `read_only` and `direct_io` are absent from [`Writable`].
