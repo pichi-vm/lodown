@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: Advanced Micro Devices, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 //! Mirrors of `<linux/loop.h>`; the safe views live in [`super::info`].
