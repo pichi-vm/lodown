@@ -46,6 +46,7 @@ fn honours_offset_size_limit_and_file_name() {
     );
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 /// `autoclear` is the only flag this ioctl can turn back off.
@@ -69,6 +70,7 @@ fn sets_and_clears_autoclear() {
     assert!(!device.status().expect("status").autoclear);
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 /// `partscan` is settable but not clearable, so clearing is a silent no-op.
@@ -95,6 +97,7 @@ fn sets_but_cannot_clear_partscan() {
     );
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 /// A status round trip must leave the configure-only flags untouched.
@@ -125,4 +128,5 @@ fn leaves_the_configure_only_flags_alone() {
     assert_eq!(after.direct_io, before.direct_io);
 
     device.clear().expect("detach");
+    drop(device);
 }

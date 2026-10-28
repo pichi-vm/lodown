@@ -22,8 +22,9 @@ use crate::uapi::*;
 /// bytes, through the block layer.
 ///
 /// Dropping a `Device` closes the handle but leaves the backing file
-/// attached. Use [`clear`](Self::clear), or [`Writable::autoclear`] for
-/// cleanup that survives a crash.
+/// attached. Use [`clear`](Self::clear) to arm a detach. The handle stays
+/// open, so drop it afterwards. [`Writable::autoclear`] covers cleanup
+/// that survives a crash.
 #[derive(Debug)]
 pub struct Device(File);
 
@@ -68,10 +69,15 @@ impl Device {
 
     /// Asks the kernel to detach the backing file (`LOOP_CLR_FD`).
     ///
-    /// Detaches immediately only if nothing else holds the device open.
-    /// Otherwise it turns on [`Writable::autoclear`] and the kernel detaches
-    /// at last close, so `Ok(())` means "detached, or scheduled to detach".
-    pub fn clear(self) -> Result<()> {
+    /// Does not close this handle. A sole holder may leave an open unbound
+    /// descriptor: [`status`](Self::status) then fails with `ENXIO`. Drop
+    /// the handle to finish that detach.
+    ///
+    /// Any other holder only turns on [`Writable::autoclear`], and `Ok(())`
+    /// means the detach is scheduled. The kernel detaches at last close.
+    /// This `Device` is itself an opener, so that close includes dropping
+    /// this handle.
+    pub fn clear(&self) -> Result<()> {
         LOOP_CLR_FD.ioctl(&self.0)?;
         Ok(())
     }
@@ -127,9 +133,16 @@ impl Device {
 
 /// Borrows the underlying file.
 ///
-/// [`try_clone`](File::try_clone) is safe against [`clear`](Device::clear):
-/// a clone does not count as another user of the device, so the detach
-/// still happens immediately. A separately opened handle defers it.
+/// [`try_clone`](File::try_clone) duplicates this descriptor without
+/// opening the device again, so it does not make [`clear`](Device::clear)
+/// defer. The duplicate keeps that same open alive, so a sole-holder
+/// detach finishes only once the duplicate is dropped too. Cloning in
+/// order to survive `clear` is unnecessary: `clear` borrows this handle
+/// and leaves it open.
+///
+/// A separately opened handle counts as another opener. `clear` then
+/// only arms autoclear, and this `Device` has to be dropped before that
+/// detach can land.
 impl AsRef<File> for Device {
     fn as_ref(&self) -> &File {
         &self.0

@@ -18,6 +18,7 @@ fn main() -> std::io::Result<()> {
     println!("attached to /dev/loop{}", device.status()?.number);
 
     device.clear()?;
+    drop(device);
     Ok(())
 }
 ```

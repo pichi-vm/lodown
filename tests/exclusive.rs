@@ -95,8 +95,10 @@ fn unbound_device_reports_enxio() {
 
     assert_eq!(device.status().unwrap_err().raw_os_error(), Some(ENXIO));
 
-    // `clear` consumes the device, so our only opener closes even on error.
+    // `clear` leaves the descriptor open, including when it fails. The
+    // kernel refuses to remove a node while that opener is live.
     assert_eq!(device.clear().unwrap_err().raw_os_error(), Some(ENXIO));
+    drop(device);
 
     match node.remove() {
         Ok(()) => {}
