@@ -8,6 +8,9 @@
 //! unbound, or that a number stays absent after removal. Neither property can
 //! be reserved against the rest of the system.
 //!
+//! udev may briefly probe newly added devices. The add/remove test waits out
+//! that probe before removing its node.
+//!
 //! Run them only on a host with an idle loop subsystem, serially:
 //!
 //! ```sh
@@ -17,6 +20,7 @@
 mod common;
 
 use std::io::ErrorKind;
+use std::time::{Duration, Instant};
 
 use lodown::{Control, Device};
 
@@ -66,7 +70,7 @@ fn add_creates_a_usable_node_and_remove_destroys_it() {
     let control = open_control();
     let number = spare(0);
     assert_eq!(control.add(number).expect("add loop device"), number);
-    let node = Node::new(&control, number);
+    let mut node = Node::new(&control, number);
     let device = Device::open(number).expect("the freshly added node must open");
 
     // Adding the same number twice must fail (EEXIST).
@@ -74,7 +78,23 @@ fn add_creates_a_usable_node_and_remove_destroys_it() {
 
     // The kernel refuses to remove a node while a handle is open.
     drop(device);
-    node.remove().expect("remove loop device");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match control.remove(number) {
+            Ok(()) => {
+                node.number = None;
+                break;
+            }
+            Err(error) if error.kind() == ErrorKind::ResourceBusy => {
+                assert!(
+                    Instant::now() < deadline,
+                    "loop{number} stayed busy for 5 seconds; udev or another opener may still hold it"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("remove loop device: {error}"),
+        }
+    }
 
     // Gone: neither openable nor removable a second time (ENODEV).
     assert!(Device::open(number).is_err());
