@@ -18,6 +18,9 @@ exclude = ["/.github", "/CONTRIBUTING.md"]
 iocuddle = "0.3"
 zerocopy = { version = "0.8", features = ["derive"] }
 
+[lints.clippy]
+self_named_module_files = "deny"
+
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
 
