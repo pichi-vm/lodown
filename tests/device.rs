@@ -59,6 +59,7 @@ fn configure_defaults_leave_a_writable_device() {
     assert!(!status.autoclear && !status.partscan);
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 #[test]
@@ -95,6 +96,7 @@ fn configure_round_trips_every_field() {
     assert!(status.read_only);
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 /// The block device must reject writes, not merely report the flag.
@@ -125,6 +127,7 @@ fn read_only_device_rejects_writes() {
 
     drop(node);
     device.clear().expect("detach");
+    drop(device);
 }
 
 /// Has the kernel torn our binding down yet?
@@ -188,6 +191,9 @@ fn autoclear_detaches_when_the_last_handle_closes() {
 }
 
 /// `clear` defers to autoclear when another opener holds the device.
+///
+/// This `Device` is itself an opener. Dropping the other handle leaves
+/// the binding up; the detach lands only once this one is dropped too.
 #[test]
 #[ignore = "requires root or CAP_SYS_ADMIN"]
 fn clear_defers_to_autoclear_while_another_handle_is_open() {
@@ -207,7 +213,34 @@ fn clear_defers_to_autoclear_while_another_handle_is_open() {
     assert!(status.autoclear, "clear must arm autoclear when it defers");
 
     drop(holder);
+    assert!(
+        !binding_is_gone(number, backing.inode()),
+        "dropping the other handle must not detach while this Device is open"
+    );
+
+    drop(device);
     await_detach(number, backing.inode(), "deferred detach never landed");
+}
+
+/// A sole opener's `clear` leaves this handle open and the device unbound.
+#[test]
+#[ignore = "requires root or CAP_SYS_ADMIN"]
+fn sole_holder_clear_leaves_an_open_unbound_handle() {
+    let control = open_control();
+
+    let backing = BackingFile::create("sole-clear");
+    let device = control
+        .attach(&backing.file, 0, Configurable::default())
+        .expect("attach a loop device");
+
+    device.clear().expect("clear");
+    assert_eq!(
+        device.status().unwrap_err().raw_os_error(),
+        Some(ENXIO),
+        "a sole holder may leave an open unbound fd"
+    );
+
+    drop(device);
 }
 
 /// A [`Device`] is itself an open handle, so it holds autoclear off.
@@ -266,6 +299,7 @@ fn change_swaps_the_file_on_a_read_only_device() {
         "expected EINVAL on a read-write device"
     );
     writable.clear().expect("detach");
+    drop(writable);
 
     let config = Configurable {
         read_only: true,
@@ -284,6 +318,7 @@ fn change_swaps_the_file_on_a_read_only_device() {
     );
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 #[test]
@@ -312,6 +347,7 @@ fn set_direct_io_toggles() {
     }
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 #[test]
@@ -338,6 +374,7 @@ fn set_capacity_and_block_size_are_accepted() {
     );
 
     device.clear().expect("detach");
+    drop(device);
 }
 
 /// Reads and writes on a `Device` reach the backing file's bytes.
@@ -398,6 +435,7 @@ fn device_reads_and_writes_the_backing_files_bytes() {
     device.as_ref().sync_all().expect("sync");
 
     device.clear().expect("detach");
+    drop(device);
 
     let mut check = std::fs::File::open(backing.path()).expect("reopen backing file");
     let mut from_file = [0_u8; 512];
