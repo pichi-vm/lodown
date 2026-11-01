@@ -109,8 +109,7 @@ jobs:
         run: cargo test --locked
 
       # Build as the runner so target/ stays runner-owned and rust-cache can
-      # save it, then execute only the routine privileged tests as root. The
-      # exclusive suite needs an otherwise idle host and remains opt-in.
+      # save it, then execute only the routine privileged tests as root.
       - name: cargo test (privileged)
         run: |
           set -euo pipefail
