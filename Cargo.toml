@@ -20,3 +20,6 @@ zerocopy = { version = "0.8", features = ["derive"] }
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[lints.clippy]
+self_named_module_files = "deny"
