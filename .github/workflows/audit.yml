@@ -28,5 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit --locked
+      - uses: taiki-e/install-action@v2.90.0
+        with:
+          tool: cargo-audit@0.22.2
       - run: cargo audit
